@@ -1,8 +1,10 @@
 (function () {
   "use strict";
 
-  // PDFs hosted in this repo are too large for GitHub Pages, so they're served from the repo itself.
-  var FILE_BASE = "https://raw.githubusercontent.com/UBGHyper/thgilciffart/main/";
+  // Hosted PDFs are too large for GitHub Pages. jsDelivr serves them from the repo as application/pdf
+  // (raw.githubusercontent forces a download); every file is under its 20 MB limit.
+  var FILE_BASE = "https://cdn.jsdelivr.net/gh/UBGHyper/thgilciffart@main/";
+  var MARKS_KEY = "hscpapers-marks";
 
   var FACULTIES = [
     ["Mathematics", ["Mathematics Standard", "Mathematics Advanced", "Mathematics Extension 1", "Mathematics Extension 2"]],
@@ -47,7 +49,32 @@
     return kb >= 1024 ? (kb / 1024).toFixed(1) + " MB" : Math.max(1, Math.round(kb)) + " KB";
   }
 
-  function href(url) { return /^https?:/.test(url) ? url : FILE_BASE + url; }
+  function href(url) {
+    if (/^https?:/.test(url)) return url;
+    return FILE_BASE + url.split("/").map(function (s) { return encodeURIComponent(decodeURIComponent(s)); }).join("/");
+  }
+
+  // ---------- marks (kept in this browser only) ----------
+  var marks = {};
+  try { marks = JSON.parse(localStorage.getItem(MARKS_KEY)) || {}; } catch (e) {}
+  function saveMarks() { try { localStorage.setItem(MARKS_KEY, JSON.stringify(marks)); } catch (e) {} }
+  function defaultTotal(subject) { return subject === "Mathematics Extension 1" ? "70" : "100"; }
+
+  function markCell(p, subject) {
+    var rec = marks[p.url] || {};
+    function input(field, placeholder) {
+      var i = h("input", { type: "text", inputmode: "decimal", class: "mark-" + field, placeholder: placeholder, "aria-label": field === "m" ? "Your mark" : "Total marks" });
+      i.value = rec[field] || "";
+      i.addEventListener("input", function () {
+        var r = marks[p.url] || {};
+        if (i.value.trim()) r[field] = i.value.trim(); else delete r[field];
+        if (Object.keys(r).length) marks[p.url] = r; else delete marks[p.url];
+        saveMarks();
+      });
+      return i;
+    }
+    return h("td", { class: "r mark" }, [input("m", "mark"), h("span", { class: "slash" }, ["/"]), input("t", defaultTotal(subject))]);
+  }
 
   function route() {
     var p = location.hash.replace(/^#\/?/, "").split("/").map(decodeURIComponent);
@@ -107,13 +134,14 @@
     }));
   }
 
-  function paperTable(papers) {
+  function paperTable(papers, subject) {
     return table(
-      [h("th", {}, ["Name"]), h("th", { class: "r num-col" }, ["Size"])],
+      [h("th", {}, ["Name"]), h("th", { class: "r mark-col" }, ["Mark"]), h("th", { class: "r num-col hide-sm" }, ["Size"])],
       papers.map(function (p) {
         return h("tr", {}, [
           h("td", {}, [h("a", { href: href(p.url), target: "_blank", rel: "noopener" }, [p.title])]),
-          h("td", { class: "r num" }, [size(p.size)])
+          markCell(p, subject),
+          h("td", { class: "r num hide-sm" }, [size(p.size)])
         ]);
       })
     );
@@ -134,12 +162,12 @@
     var shown = 0;
 
     var flat = sec.papers.filter(match);
-    if (flat.length) { app.appendChild(paperTable(flat)); shown++; }
+    if (flat.length) { app.appendChild(paperTable(flat, s.name)); shown++; }
     sec.groups.forEach(function (g) {
       var papers = q && g.name.toLowerCase().indexOf(q) !== -1 ? g.papers : g.papers.filter(match);
       if (!papers.length) return;
       app.appendChild(h("div", { class: "gtitle" }, [g.name]));
-      app.appendChild(paperTable(papers));
+      app.appendChild(paperTable(papers, s.name));
       shown++;
     });
     if (!shown) app.appendChild(h("p", { class: "empty" }, ["No matches."]));

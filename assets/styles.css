@@ -25,6 +25,8 @@
 
 * { box-sizing: border-box; }
 
+html { scrollbar-color: var(--border) var(--bg); }
+
 body {
   margin: 0;
   background: var(--bg);
@@ -66,6 +68,17 @@ header.top {
   border-radius: 999px;
 }
 #search:focus { outline: none; border-color: var(--accent); }
+#search::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  cursor: pointer;
+  background: var(--dim);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M1 1l8 8M9 1L1 9' stroke='black' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M1 1l8 8M9 1L1 9' stroke='black' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+#search::-webkit-search-cancel-button:hover { background: var(--text); }
 
 #theme-toggle {
   flex: none;
@@ -110,11 +123,32 @@ th.r, td.r { text-align: right; }
 td a { color: var(--link); }
 td.num { color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
 th.num-col { width: 90px; }
+th.mark-col { width: 120px; }
+
+td.mark { white-space: nowrap; padding-top: 3px; padding-bottom: 3px; }
+td.mark input {
+  width: 3.6em;
+  padding: 3px 5px;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+}
+td.mark input::placeholder { color: var(--dim); opacity: .55; }
+td.mark input:hover { border-color: var(--border); }
+td.mark input:focus { outline: none; border-color: var(--accent); background: var(--bg); }
+td.mark input.mark-m:not(:placeholder-shown) { font-weight: 700; }
+td.mark .slash { color: var(--dim); margin: 0 1px; }
+tbody tr:not(:hover):not(:focus-within) td.mark:has(input.mark-m:placeholder-shown) input:placeholder-shown::placeholder { color: transparent; }
+tbody tr:not(:hover):not(:focus-within) td.mark:has(input.mark-m:placeholder-shown):has(input.mark-t:placeholder-shown) .slash { visibility: hidden; }
 
 .tabs {
   display: flex;
-  gap: 20px;
-  overflow-x: auto;
+  flex-wrap: wrap;
+  column-gap: 20px;
   border-bottom: 1px solid var(--border);
 }
 .tabs a {
