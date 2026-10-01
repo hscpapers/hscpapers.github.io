@@ -1,0 +1,179 @@
+{
+ "subjects": [
+  {
+   "name": "Agriculture",
+   "slug": "agriculture",
+   "native": false,
+   "paperCount": 10,
+   "schoolCount": 2
+  },
+  {
+   "name": "Ancient History",
+   "slug": "ancient-history",
+   "native": false,
+   "paperCount": 3,
+   "schoolCount": 2
+  },
+  {
+   "name": "Biology",
+   "slug": "biology",
+   "native": true,
+   "paperCount": 128,
+   "schoolCount": 21
+  },
+  {
+   "name": "Business Studies",
+   "slug": "business-studies",
+   "native": false,
+   "paperCount": 56,
+   "schoolCount": 23
+  },
+  {
+   "name": "Chemistry",
+   "slug": "chemistry",
+   "native": true,
+   "paperCount": 374,
+   "schoolCount": 41
+  },
+  {
+   "name": "Community and Family Studies",
+   "slug": "community-and-family-studies",
+   "native": false,
+   "paperCount": 1,
+   "schoolCount": 0
+  },
+  {
+   "name": "Earth and Environmental Science",
+   "slug": "earth-and-environmental-science",
+   "native": false,
+   "paperCount": 10,
+   "schoolCount": 3
+  },
+  {
+   "name": "Economics",
+   "slug": "economics",
+   "native": false,
+   "paperCount": 83,
+   "schoolCount": 20
+  },
+  {
+   "name": "Engineering Studies",
+   "slug": "engineering-studies",
+   "native": false,
+   "paperCount": 8,
+   "schoolCount": 3
+  },
+  {
+   "name": "English",
+   "slug": "english",
+   "native": false,
+   "paperCount": 235,
+   "schoolCount": 47
+  },
+  {
+   "name": "History Extension",
+   "slug": "history-extension",
+   "native": false,
+   "paperCount": 3,
+   "schoolCount": 1
+  },
+  {
+   "name": "Information Processes and Technology",
+   "slug": "information-processes-and-technology",
+   "native": false,
+   "paperCount": 7,
+   "schoolCount": 3
+  },
+  {
+   "name": "Legal Studies",
+   "slug": "legal-studies",
+   "native": false,
+   "paperCount": 13,
+   "schoolCount": 5
+  },
+  {
+   "name": "Mathematics Advanced",
+   "slug": "mathematics-advanced",
+   "native": true,
+   "paperCount": 1638,
+   "schoolCount": 65
+  },
+  {
+   "name": "Mathematics Extension 1",
+   "slug": "mathematics-extension-1",
+   "native": true,
+   "paperCount": 1811,
+   "schoolCount": 62
+  },
+  {
+   "name": "Mathematics Extension 2",
+   "slug": "mathematics-extension-2",
+   "native": true,
+   "paperCount": 1282,
+   "schoolCount": 66
+  },
+  {
+   "name": "Mathematics Standard",
+   "slug": "mathematics-standard",
+   "native": true,
+   "paperCount": 250,
+   "schoolCount": 45
+  },
+  {
+   "name": "Miscellaneous",
+   "slug": "miscellaneous",
+   "native": true,
+   "paperCount": 139,
+   "schoolCount": 6
+  },
+  {
+   "name": "Modern History",
+   "slug": "modern-history",
+   "native": false,
+   "paperCount": 13,
+   "schoolCount": 7
+  },
+  {
+   "name": "PDHPE",
+   "slug": "pdhpe",
+   "native": false,
+   "paperCount": 5,
+   "schoolCount": 2
+  },
+  {
+   "name": "Physics",
+   "slug": "physics",
+   "native": true,
+   "paperCount": 285,
+   "schoolCount": 33
+  },
+  {
+   "name": "Senior Science",
+   "slug": "senior-science",
+   "native": false,
+   "paperCount": 4,
+   "schoolCount": 1
+  },
+  {
+   "name": "Software Design and Development",
+   "slug": "software-design-and-development",
+   "native": false,
+   "paperCount": 8,
+   "schoolCount": 6
+  },
+  {
+   "name": "Studies of Religion I",
+   "slug": "studies-of-religion-i",
+   "native": false,
+   "paperCount": 1,
+   "schoolCount": 1
+  },
+  {
+   "name": "Studies of Religion II",
+   "slug": "studies-of-religion-ii",
+   "native": false,
+   "paperCount": 1,
+   "schoolCount": 1
+  }
+ ]
+}
