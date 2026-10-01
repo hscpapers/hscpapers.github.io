@@ -5,18 +5,22 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>hscpapers</title>
 <meta name="description" content="NSW HSC past and trial papers.">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Merriweather+Sans:wght@400;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/styles.css">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1d2024" media="(prefers-color-scheme: dark)">
 <script>try{var t=localStorage.getItem("papersdb-theme");if(!t)t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="preload" href="assets/fonts/merriweather-sans-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="data/manifest.json" as="fetch" crossorigin>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://thsc.zaxu.xyz">
+<link rel="stylesheet" href="assets/styles.css">
+<script src="assets/app.js" defer></script>
 </head>
 <body>
 <header class="top">
   <div class="wrap top-inner">
     <a class="brand" href="#/">hscpapers</a>
     <nav class="crumbs" id="crumbs" aria-label="Breadcrumb"></nav>
-    <input id="search" type="search" placeholder="search" aria-label="Search">
+    <input id="search" type="search" placeholder="search" aria-label="Search" autocomplete="off">
     <button id="theme-toggle" type="button" aria-label="Toggle dark mode"></button>
   </div>
 </header>
@@ -26,6 +30,5 @@
   <a href="https://github.com/hscpapers/hscpapers.github.io/blob/main/NOTICE.md">notice</a>
   <a href="https://github.com/hscpapers/hscpapers.github.io/blob/main/Changelog.md">changelog</a>
 </footer>
-<script src="assets/app.js"></script>
 </body>
 </html>

@@ -173,27 +173,72 @@
     if (!shown) app.appendChild(h("p", { class: "empty" }, ["No matches."]));
   }
 
+  function loadSubject(slug) {
+    if (!cache[slug]) {
+      cache[slug] = fetch("data/subjects/" + slug + ".json")
+        .then(function (res) { if (!res.ok) throw 0; return res.json(); })
+        .catch(function (e) { delete cache[slug]; throw e; });
+    }
+    return cache[slug];
+  }
+
+  // Start fetching a subject as soon as the pointer or finger lands on its link.
+  function prefetch(e) {
+    var a = e.target.closest && e.target.closest("a[href^='#/']");
+    if (!a) return;
+    var slug = decodeURIComponent(a.getAttribute("href").slice(2).split("/")[0]);
+    if (slug && subjects.some(function (s) { return s.slug === slug; })) loadSubject(slug).catch(function () {});
+  }
+  app.addEventListener("pointerover", prefetch);
+  app.addEventListener("touchstart", prefetch, { passive: true });
+  app.addEventListener("focusin", prefetch);
+
+  var scrollPos = {};
+  var pendingScroll = 0;
+  function restoreScroll() { window.scrollTo(0, pendingScroll); }
+
   function render() {
     var r = route();
     var entry = subjects.filter(function (s) { return s.slug === r.slug; })[0];
-    if (!entry) { renderHome(); return; }
+    if (!entry) { renderHome(); restoreScroll(); return; }
     setCrumbs(entry.name);
-    if (cache[r.slug]) { renderSubject(cache[r.slug], r); return; }
-    app.innerHTML = "";
-    fetch("data/subjects/" + r.slug + ".json")
-      .then(function (res) { if (!res.ok) throw 0; return res.json(); })
-      .then(function (full) { cache[r.slug] = full; renderSubject(full, route()); })
+    loadSubject(r.slug)
+      .then(function (full) {
+        if (route().slug !== r.slug) return;
+        renderSubject(full, route());
+        restoreScroll();
+      })
       .catch(function () { app.innerHTML = ""; app.appendChild(h("p", { class: "empty" }, ["Couldn't load this subject."])); });
   }
 
   var t;
-  search.addEventListener("input", function () { clearTimeout(t); t = setTimeout(render, 100); });
+  search.addEventListener("input", function () {
+    clearTimeout(t);
+    t = setTimeout(function () { pendingScroll = window.scrollY; render(); }, 100);
+  });
+
+  if ("scrollRestoration" in history) history.scrollRestoration = "manual";
   var lastSlug = "";
-  window.addEventListener("hashchange", function () {
+  window.addEventListener("hashchange", function (e) {
+    scrollPos[e.oldURL.split("#")[1] || ""] = window.scrollY;
+    pendingScroll = scrollPos[location.hash.slice(1)] || 0;
     var slug = route().slug;
     if (slug !== lastSlug) search.value = "";
     lastSlug = slug;
     render();
+  });
+
+  document.addEventListener("keydown", function (e) {
+    var typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+    if (e.key === "/" && !typing && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      search.focus();
+      search.select();
+    } else if (e.key === "Escape" && document.activeElement === search) {
+      search.value = "";
+      search.blur();
+      render();
+    }
   });
 
   fetch("data/manifest.json")
