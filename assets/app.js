@@ -1,9 +1,6 @@
 (function () {
   "use strict";
 
-  // Hosted PDFs are too large for GitHub Pages. jsDelivr serves them from the repo as application/pdf
-  // (raw.githubusercontent forces a download); every file is under its 20 MB limit.
-  var FILE_BASE = "https://cdn.jsdelivr.net/gh/UBGHyper/thgilciffart@main/";
   var MARKS_KEY = "hscpapers-marks";
 
   var FACULTIES = [
@@ -51,7 +48,7 @@
 
   function href(url) {
     if (/^https?:/.test(url)) return url;
-    return FILE_BASE + url.split("/").map(function (s) { return encodeURIComponent(decodeURIComponent(s)); }).join("/");
+    return url.split("/").map(function (s) { return encodeURIComponent(decodeURIComponent(s)); }).join("/");
   }
 
   // ---------- marks (kept in this browser only) ----------

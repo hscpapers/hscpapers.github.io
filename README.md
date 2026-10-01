@@ -6,7 +6,7 @@ NSW HSC past and trial papers, sorted by subject, year and exam.
 
 ## Where the papers live
 
-- PDFs: [UBGHyper/thgilciffart](https://github.com/UBGHyper/thgilciffart), a fork of [papersdb](https://github.com/thgilciffart/thgilciffart)
+- PDFs: served from the `files-1` to `files-9` repos (GitHub Pages caps each site at 1 GB). They copy from [UBGHyper/thgilciffart](https://github.com/UBGHyper/thgilciffart), a fork of [papersdb](https://github.com/thgilciffart/thgilciffart), using the split in `scripts/shards.json`.
 - Linked papers: [thsc.zaxu.xyz](https://thsc.zaxu.xyz/)
 
 See [NOTICE.md](NOTICE.md).

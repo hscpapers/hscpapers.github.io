@@ -86,12 +86,16 @@ class Store:
 def add_native(store):
     with open(os.path.join(RAW, "papersdb_tree.json"), encoding="utf-8") as f:
         tree = json.load(f)["tree"]
+    # Pages caps each site at 1 GB, so hosted PDFs are split across repos served at /files-N/ (see shards.json)
+    with open(os.path.join(ROOT, "scripts", "shards.json"), encoding="utf-8") as f:
+        shard_of = {d: name for name, dirs in json.load(f).items() for d in dirs}
     for b in tree:
         if b["type"] != "blob" or not b["path"].lower().endswith(".pdf"):
             continue
         parts = b["path"].split("/")
         subject, inter, fname = parts[0], parts[1:-1], parts[-1]
-        paper = {"title": fname[:-4], "url": b["path"].replace(" ", "%20"), "size": b["size"]}
+        shard = shard_of[b["path"].rsplit("/", 1)[0]]
+        paper = {"title": fname[:-4], "url": shard + "/" + b["path"].replace(" ", "%20"), "size": b["size"]}
         top = inter[0] if inter else ""
         if top == "HSC":
             ykey, section, group = "12", "HSC", " / ".join(inter[1:]) or None
