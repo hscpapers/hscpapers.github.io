@@ -1,148 +1,434 @@
 (function () {
   "use strict";
 
+  if (window.MathfieldElement) {
+    MathfieldElement.fontsDirectory = new URL("assets/vendor/mathlive/fonts/", location.href).href;
+    MathfieldElement.soundsDirectory = null;
+  }
+
   // =====================================================================
-  // Parsing
+  // Parsing (LaTeX from the MathLive editor)
   // =====================================================================
 
-  var BUILTINS = ["arcsin", "arccos", "arctan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "sin", "cos", "tan",
-    "sec", "csc", "cot", "exp", "ln", "log", "sqrt", "cbrt", "abs", "floor", "ceil", "round", "sign", "min", "max",
-    "mod", "conj", "real", "imag", "arg"];
-  var ALIAS = { arcsin: "asin", arccos: "acos", arctan: "atan" };
-  var NAMED = ["theta", "pi", "tau"];
-  var RESERVED = { x: 1, y: 1, t: 1, "θ": 1, r: 1, z: 1, w: 1, e: 1, i: 1, pi: 1, tau: 1 };
+  var FN_CMDS = { sin: 1, cos: 1, tan: 1, sec: 1, csc: 1, cot: 1, arcsin: "asin", arccos: "acos", arctan: "atan",
+    sinh: 1, cosh: 1, tanh: 1, exp: 1, ln: 1, log: 1, arg: 1, min: 1, max: 1 };
+  var OPNAMES = { Re: "real", Im: "imag", real: "real", imag: "imag", arg: "arg", sign: "sign", sgn: "sign", floor: "floor",
+    ceil: "ceil", round: "round", mod: "mod", nCr: "nCr", conj: "conj", abs: "abs", sec: "sec", csc: "csc", cot: "cot",
+    sinh: "sinh", cosh: "cosh", tanh: "tanh", arcsin: "asin", arccos: "acos", arctan: "atan", exp: "exp", ln: "ln", log: "log",
+    sin: "sin", cos: "cos", tan: "tan", min: "min", max: "max", cbrt: "cbrt", sqrt: "sqrt" };
+  var GREEK = { alpha: 1, beta: 1, gamma: 1, delta: 1, epsilon: 1, varepsilon: 1, zeta: 1, eta: 1, iota: 1, kappa: 1, lambda: 1,
+    mu: 1, nu: 1, xi: 1, rho: 1, sigma: 1, phi: 1, varphi: 1, chi: 1, psi: 1, omega: 1, Gamma: 1, Delta: 1, Lambda: 1, Phi: 1, Psi: 1, Omega: 1 };
+  var SKIP_CMDS = { ",": 1, ";": 1, ":": 1, "!": 1, " ": 1, quad: 1, qquad: 1, displaystyle: 1, textstyle: 1, limits: 1, nolimits: 1 };
+  var RESERVED = { x: 1, y: 1, t: 1, "θ": 1, r: 1, z: 1, w: 1, e: 1, i: 1 };
 
   function GraphError(msg, missing) { this.message = msg; this.missing = missing || []; }
 
-  function tokenize(src, userFns) {
-    src = src.replace(/[·×]/g, "*").replace(/÷/g, "/").replace(/−/g, "-").replace(/≤/g, "<=").replace(/≥/g, ">=")
-      .replace(/→/g, "->").replace(/\*\*/g, "^").replace(/π/g, "pi").replace(/τ/g, "tau");
-    var out = [], p = 0;
+  var UNICODE_CMDS = { "→": "to", "≤": "le", "≥": "ge", "·": "cdot", "×": "times", "÷": "div", "π": "pi", "θ": "theta", "∞": "infty" };
+
+  function lex(src) {
+    var out = [], p = 0, m;
     while (p < src.length) {
-      var ch = src[p], rest = src.slice(p), m;
-      if (/\s/.test(ch)) { p++; continue; }
-      if ((m = /^(\d+\.?\d*|\.\d+)/.exec(rest))) { out.push({ k: "num", v: parseFloat(m[1]) }); p += m[1].length; continue; }
-      var two = rest.slice(0, 2);
-      if (two === "<=" || two === ">=" || two === "->" || two === "==") { out.push({ k: "op", v: two === "==" ? "=" : two }); p += 2; continue; }
-      if ("+-*/^(),|!=<>".indexOf(ch) >= 0) { out.push({ k: "op", v: ch }); p++; continue; }
-      if (/[A-Za-zθ]/.test(ch)) {
-        var hit = null, j;
-        for (j = 0; j < BUILTINS.length; j++) if (rest.indexOf(BUILTINS[j]) === 0) { hit = { k: "fn", v: ALIAS[BUILTINS[j]] || BUILTINS[j] }; p += BUILTINS[j].length; break; }
-        if (!hit) for (j = 0; j < NAMED.length; j++) if (rest.indexOf(NAMED[j]) === 0) { hit = { k: "id", v: NAMED[j] === "theta" ? "θ" : NAMED[j] }; p += NAMED[j].length; break; }
-        if (!hit) {
-          m = /^[A-Za-zθ](_[A-Za-z0-9]+)?/.exec(rest);
-          hit = { k: "id", v: m[0] }; p += m[0].length;
-        }
-        out.push(hit);
+      var ch = src[p];
+      if (ch === "\\") {
+        m = /^\\([A-Za-z]+|.)/.exec(src.slice(p));
+        p += m[0].length;
+        if (!SKIP_CMDS[m[1]]) out.push({ k: "cmd", v: m[1] });
         continue;
       }
+      if (UNICODE_CMDS[ch]) { out.push({ k: "cmd", v: UNICODE_CMDS[ch] }); p++; continue; }
+      if (ch === "−") { out.push({ k: "sym", v: "-" }); p++; continue; }
+      if (/\s|~/.test(ch)) { p++; continue; }
+      if (/[0-9.]/.test(ch)) { out.push({ k: "digit", v: ch }); p++; continue; }
+      if (/[A-Za-z]/.test(ch)) { out.push({ k: "letter", v: ch }); p++; continue; }
+      if ("{}^_()[]|+-*/=<>,!'".indexOf(ch) >= 0) { out.push({ k: "sym", v: ch }); p++; continue; }
       throw new GraphError("can't read “" + ch + "”");
     }
     return out;
   }
 
   function parse(src, userFns) {
-    var toks = tokenize(src, userFns), p = 0, absDepth = 0;
-    function peek() { return toks[p]; }
-    function isOp(v) { var t = toks[p]; return t && t.k === "op" && t.v === v; }
-    function expect(v) { if (!isOp(v)) throw new GraphError(p < toks.length ? "expected “" + v + "”" : "unfinished expression"); p++; }
-    function startsFactor() {
-      var t = toks[p];
-      if (!t) return false;
-      if (t.k !== "op") return true;
-      return t.v === "(" || (t.v === "|" && absDepth === 0);
+    var T = lex(src), p = 0, absDepth = 0, intDepth = 0;
+    function tok(o) { return T[p + (o || 0)]; }
+    function isSym(v, o) { var t = tok(o); return !!t && t.k === "sym" && t.v === v; }
+    function isCmd(v, o) { var t = tok(o); return !!t && t.k === "cmd" && (v === undefined || t.v === v); }
+    function expectSym(v) {
+      if (!isSym(v)) throw new GraphError(p < T.length ? "expected “" + v + "”" : "unfinished expression");
+      p++;
     }
-    function args() {
-      expect("(");
-      var a = [expr()];
-      while (isOp(",")) { p++; a.push(expr()); }
-      expect(")");
+    function expectRight(close) {
+      if (!isCmd("right")) throw new GraphError("unfinished bracket");
+      p++;
+      var t = T[p++];
+      if (!t || (t.v !== close && !(close === "|" && (t.v === "vert" || t.v === "rvert")))) throw new GraphError("mismatched brackets");
+    }
+    function placeholderCheck() {
+      if (isCmd("placeholder")) throw new GraphError("fill in the empty box");
+    }
+
+    // {group} or a single token, as used by \frac, ^, _ and \sqrt
+    function arg() {
+      placeholderCheck();
+      if (isSym("{")) {
+        p++;
+        if (isSym("}")) throw new GraphError("fill in the empty box");
+        var e = expr();
+        expectSym("}");
+        return e;
+      }
+      var t = T[p];
+      if (!t) throw new GraphError("unfinished expression");
+      if (t.k === "digit") { p++; return { t: "num", v: parseFloat(t.v) }; }
+      if (t.k === "letter") { p++; return letterNode(t.v); }
+      return primary();
+    }
+
+    // raw text of a {group}, used for subscripts and \operatorname{...}
+    function rawText() {
+      if (!isSym("{")) { var t = T[p++]; return t ? t.v : ""; }
+      p++;
+      var depth = 1, s = "";
+      while (p < T.length) {
+        var t2 = T[p++];
+        if (t2.k === "sym" && t2.v === "{") { depth++; continue; }
+        if (t2.k === "sym" && t2.v === "}") { if (--depth === 0) break; continue; }
+        if (t2.k === "cmd" && (t2.v === "mathrm" || t2.v === "operatorname" || t2.v === "text" || t2.v === "mathit")) continue;
+        s += t2.v;
+      }
+      return s;
+    }
+
+    function letterNode(v) {
+      if (v === "e") return { t: "num", v: Math.E };
+      if (v === "i") return { t: "i" };
+      return { t: "var", n: v };
+    }
+
+    // Is the next thing a differential (dx, \differentialD x, \mathrm{d}x)?
+    function diffHere(strict) {
+      var t = tok(), n = tok(1);
+      if (!t || !n) return false;
+      if (t.k === "cmd" && t.v === "differentialD") return true;
+      if (t.k === "cmd" && t.v === "mathrm" && isSym("{", 1) && tok(2) && tok(2).v === "d" && isSym("}", 3)) return true;
+      if (t.k === "letter" && t.v === "d" && (n.k === "letter" || (n.k === "cmd" && n.v === "theta"))) return !strict || isEndAfterDiff(2);
+      return false;
+    }
+    function atDifferential() { return intDepth > 0 && diffHere(true); }
+    // "dx" only ends an integral when nothing that could continue the product follows it
+    function isEndAfterDiff(o) {
+      var t = tok(o);
+      return !t || (t.k === "sym" && "+-=<>),]}".indexOf(t.v) >= 0) || (t.k === "cmd" && (t.v === "right" || t.v === "le" || t.v === "ge" || t.v === "to"));
+    }
+    function readDifferential() {
+      if (isCmd("differentialD")) p++;
+      else if (isCmd("mathrm")) p += 4;
+      else p++;
+      var t = T[p++];
+      if (!t) throw new GraphError("add the variable after d, e.g. dx");
+      if (t.k === "letter") return t.v;
+      if (t.k === "cmd" && t.v === "theta") return "θ";
+      throw new GraphError("add the variable after d, e.g. dx");
+    }
+
+    function startsFactor() {
+      var t = tok();
+      if (!t) return false;
+      if (atDifferential()) return false;
+      if (t.k === "digit" || t.k === "letter") return true;
+      if (t.k === "sym") return t.v === "(" || t.v === "[" || t.v === "{" || (t.v === "|" && absDepth === 0);
+      if (t.k === "cmd") {
+        if (t.v === "left") return true;
+        return !/^(right|cdot|times|div|le|leq|leqslant|ge|geq|geqslant|lt|gt|to|rightarrow|mapsto|longrightarrow|rfloor|rceil|rvert|vert|mid|pm|prime)$/.test(t.v);
+      }
+      return false;
+    }
+
+    function callArgs() {
+      var list = [];
+      if (isSym("(")) {
+        p++;
+        list.push(expr());
+        while (isSym(",")) { p++; list.push(expr()); }
+        expectSym(")");
+      } else {
+        p++;
+        if (!isSym("(")) throw new GraphError("expected “(”");
+        p++;
+        list.push(expr());
+        while (isSym(",")) { p++; list.push(expr()); }
+        expectRight(")");
+      }
+      return list;
+    }
+    function opensCall() { return isSym("(") || (isCmd("left") && isSym("(", 1)); }
+
+    function implicitArg() {
+      var a = isSym("-") ? (p++, { t: "neg", a: power() }) : power();
+      while (startsFactor() && !isFnStart()) a = { t: "bin", op: "*", a: a, b: power() };
       return a;
     }
-    function primary() {
-      var t = toks[p++];
-      if (!t) throw new GraphError("unfinished expression");
-      if (t.k === "num") return { t: "num", v: t.v };
-      if (t.k === "op" && t.v === "(") {
-        var items = [expr()];
-        while (isOp(",")) { p++; items.push(expr()); }
-        expect(")");
-        return items.length > 1 ? { t: "tuple", items: items } : items[0];
-      }
-      if (t.k === "op" && t.v === "|") {
-        absDepth++;
-        var a = expr();
-        absDepth--;
-        expect("|");
-        return { t: "call", f: "abs", args: [a] };
-      }
-      if (t.k === "fn") {
-        var ex = null;
-        if (isOp("^")) { p++; ex = unary(); }
-        var node = { t: "call", f: t.v, args: isOp("(") ? args() : [implicitArg()] };
-        return ex ? { t: "bin", op: "^", a: node, b: ex } : node;
-      }
-      if (t.k === "id") {
-        if (userFns[t.v] && isOp("(")) return { t: "ucall", n: t.v, args: args() };
-        if (t.v === "pi") return { t: "num", v: Math.PI };
-        if (t.v === "tau") return { t: "num", v: 2 * Math.PI };
-        if (t.v === "e") return { t: "num", v: Math.E };
-        if (t.v === "i") return { t: "i" };
-        return { t: "var", n: t.v };
-      }
-      throw new GraphError("unexpected “" + t.v + "”");
+    function isFnStart() {
+      var t = tok();
+      if (!t || t.k !== "cmd") return false;
+      return !!FN_CMDS[t.v] || t.v === "operatorname" || t.v === "int" || t.v === "sum" || t.v === "prod";
     }
+
+    function applyFn(name) {
+      var ex = null, base = null;
+      if (name === "log" && isSym("_")) { p++; base = arg(); }
+      if (isSym("^")) { p++; ex = arg(); }
+      if (name === "log" && isSym("_") && !base) { p++; base = arg(); }
+      var args = opensCall() ? callArgs() : [implicitArg()];
+      var node = { t: "call", f: name, args: args };
+      if (base) node = { t: "bin", op: "/", a: { t: "call", f: "ln", args: args }, b: { t: "call", f: "ln", args: [base] } };
+      return ex ? { t: "bin", op: "^", a: node, b: ex } : node;
+    }
+
+    function bigOp(kind) {
+      var lo = null, hi = null, v = null;
+      for (var k = 0; k < 2; k++) {
+        if (isSym("_")) {
+          p++;
+          if (kind === "int") lo = arg();
+          else {
+            if (!isSym("{")) throw new GraphError("write the start like n=1");
+            p++;
+            var vt = T[p++];
+            if (!vt || vt.k !== "letter") throw new GraphError("write the start like n=1");
+            v = vt.v;
+            if (isSym("_")) { p++; v += "_" + rawText(); }
+            expectSym("=");
+            lo = expr();
+            expectSym("}");
+          }
+        } else if (isSym("^")) { p++; hi = arg(); }
+      }
+      if (!lo || !hi) throw new GraphError(kind === "int" ? "integrals need limits" : "add the start and end values");
+      if (kind === "int") {
+        intDepth++;
+        var body = expr();
+        intDepth--;
+        if (!diffHere(false)) throw new GraphError("finish the integral with dx");
+        return { t: "int", v: readDifferential(), lo: lo, hi: hi, a: body };
+      }
+      return { t: kind, v: v, lo: lo, hi: hi, a: implicitArg() };
+    }
+
+    function fracOrDeriv() {
+      // d/dx written as \frac{d}{dx} or \frac{\differentialD}{\differentialD x}
+      var save = p;
+      if (isSym("{") && ((tok(1) && tok(1).v === "d") || isCmd("differentialD", 1)) && isSym("}", 2) && isSym("{", 3)) {
+        var t = tok(4), u = tok(5);
+        if (t && (t.v === "d" || (t.k === "cmd" && t.v === "differentialD")) && u && (u.k === "letter" || (u.k === "cmd" && u.v === "theta")) && isSym("}", 6)) {
+          p += 7;
+          return { t: "deriv", v: u.k === "letter" ? u.v : "θ", a: implicitArg() };
+        }
+      }
+      p = save;
+      var num = arg(), den = arg();
+      return { t: "bin", op: "/", a: num, b: den };
+    }
+
+    function primary() {
+      placeholderCheck();
+      var t = T[p++];
+      if (!t) throw new GraphError("unfinished expression");
+      if (t.k === "digit") {
+        var s = t.v;
+        while (tok() && tok().k === "digit") s += T[p++].v;
+        var v = parseFloat(s);
+        if (isNaN(v)) throw new GraphError("can't read the number “" + s + "”");
+        return { t: "num", v: v };
+      }
+      if (t.k === "letter") {
+        var name = t.v, primes = 0;
+        if (isSym("_")) { p++; name += "_" + rawText(); }
+        while (isSym("'")) { p++; primes++; }
+        if (isSym("^") && isSym("{", 1) && isCmd("prime", 2)) {
+          p += 2;
+          while (isCmd("prime")) { p++; primes++; }
+          expectSym("}");
+        }
+        if (userFns[name] && opensCall()) return { t: "ucall", n: name, args: callArgs(), primes: primes };
+        if (primes) throw new GraphError("′ only works on functions like f′(x)");
+        return name.length === 1 ? letterNode(name) : { t: "var", n: name };
+      }
+      if (t.k === "sym") {
+        if (t.v === "(" || t.v === "[") {
+          var close = t.v === "(" ? ")" : "]", items = [expr()];
+          while (isSym(",")) { p++; items.push(expr()); }
+          expectSym(close);
+          return items.length > 1 ? { t: "tuple", items: items } : items[0];
+        }
+        if (t.v === "{") { var g = expr(); expectSym("}"); return g; }
+        if (t.v === "|") { absDepth++; var a = expr(); absDepth--; expectSym("|"); return { t: "call", f: "abs", args: [a] }; }
+        throw new GraphError("unexpected “" + t.v + "”");
+      }
+      // commands
+      var c = t.v;
+      if (c === "left") {
+        var d = T[p++];
+        if (!d) throw new GraphError("unfinished bracket");
+        if (d.v === "(" || d.v === "[") {
+          var cl = d.v === "(" ? ")" : "]", its = [expr()];
+          while (isSym(",")) { p++; its.push(expr()); }
+          expectRight(cl);
+          return its.length > 1 ? { t: "tuple", items: its } : its[0];
+        }
+        if (d.v === "|" || d.v === "vert" || d.v === "lvert") {
+          absDepth++; var b = expr(); absDepth--;
+          expectRight("|");
+          return { t: "call", f: "abs", args: [b] };
+        }
+        if (d.v === "lfloor" || d.v === "lceil") {
+          var f2 = expr();
+          expectRight(d.v === "lfloor" ? "rfloor" : "rceil");
+          return { t: "call", f: d.v === "lfloor" ? "floor" : "ceil", args: [f2] };
+        }
+        if (d.v === "{" || d.v === "lbrace") throw new GraphError("piecewise functions aren't supported yet");
+        throw new GraphError("unsupported bracket");
+      }
+      if (c === "frac" || c === "dfrac" || c === "tfrac") return fracOrDeriv();
+      if (c === "sqrt") {
+        if (isSym("[")) {
+          p++;
+          var n = expr();
+          expectSym("]");
+          return { t: "bin", op: "^", a: arg(), b: { t: "bin", op: "/", a: { t: "num", v: 1 }, b: n } };
+        }
+        return { t: "call", f: "sqrt", args: [arg()] };
+      }
+      if (c === "pi") return { t: "num", v: Math.PI };
+      if (c === "tau") return { t: "num", v: 2 * Math.PI };
+      if (c === "infty") return { t: "num", v: Infinity };
+      if (c === "theta") return { t: "var", n: "θ" };
+      if (c === "exponentialE") return { t: "num", v: Math.E };
+      if (c === "imaginaryI") return { t: "i" };
+      if (c === "differentialD") return { t: "var", n: "d" };
+      if (GREEK[c]) {
+        var gname = c;
+        if (isSym("_")) { p++; gname += "_" + rawText(); }
+        return { t: "var", n: gname };
+      }
+      if (FN_CMDS[c]) return applyFn(FN_CMDS[c] === 1 ? c : FN_CMDS[c]);
+      if (c === "operatorname" || c === "mathrm" || c === "text" || c === "mathit") {
+        var word = rawText();
+        if (OPNAMES[word]) return applyFn(OPNAMES[word]);
+        if (word === "d") return { t: "var", n: "d" };
+        throw new GraphError("unknown function “" + word + "”");
+      }
+      if (c === "overline" || c === "bar") return { t: "call", f: "conj", args: [arg()] };
+      if (c === "binom") { var top = arg(); return { t: "call", f: "nCr", args: [top, arg()] }; }
+      if (c === "lfloor" || c === "lceil") {
+        var fl = expr();
+        if (!isCmd(c === "lfloor" ? "rfloor" : "rceil")) throw new GraphError("unfinished bracket");
+        p++;
+        return { t: "call", f: c === "lfloor" ? "floor" : "ceil", args: [fl] };
+      }
+      if (c === "vert" || c === "lvert" || c === "mid") { absDepth++; var vb = expr(); absDepth--; p++; return { t: "call", f: "abs", args: [vb] }; }
+      if (c === "int") return bigOp("int");
+      if (c === "sum") return bigOp("sum");
+      if (c === "prod") return bigOp("prod");
+      if (c === "placeholder") throw new GraphError("fill in the empty box");
+      throw new GraphError("unsupported: \\" + c);
+    }
+
     function postfix() {
       var a = primary();
-      while (isOp("!")) { p++; a = { t: "fact", a: a }; }
+      while (isSym("!")) { p++; a = { t: "fact", a: a }; }
       return a;
     }
     function power() {
       var base = postfix();
-      if (isOp("^")) { p++; return { t: "bin", op: "^", a: base, b: unary() }; }
+      if (isSym("^")) { p++; return { t: "bin", op: "^", a: base, b: arg() }; }
       return base;
     }
-    function implicitArg() {
-      var a = isOp("-") ? (p++, { t: "neg", a: power() }) : power();
-      while (startsFactor() && peek().k !== "fn") a = { t: "bin", op: "*", a: a, b: power() };
-      return a;
-    }
     function unary() {
-      if (isOp("-")) { p++; return { t: "neg", a: unary() }; }
-      if (isOp("+")) { p++; return unary(); }
+      if (isSym("-")) { p++; return { t: "neg", a: unary() }; }
+      if (isSym("+")) { p++; return unary(); }
       return power();
     }
     function term() {
       var a = unary();
       for (;;) {
-        if (isOp("*") || isOp("/")) { var o = toks[p++].v; a = { t: "bin", op: o, a: a, b: unary() }; }
+        if (isSym("*") || isCmd("cdot") || isCmd("times")) { p++; a = { t: "bin", op: "*", a: a, b: unary() }; }
+        else if (isSym("/") || isCmd("div")) { p++; a = { t: "bin", op: "/", a: a, b: unary() }; }
         else if (startsFactor()) a = { t: "bin", op: "*", a: a, b: power() };
         else return a;
       }
     }
     function expr() {
       var a = term();
-      while (isOp("+") || isOp("-")) { var o = toks[p++].v; a = { t: "bin", op: o, a: a, b: term() }; }
-      return a;
+      for (;;) {
+        if (isSym("+")) { p++; a = { t: "bin", op: "+", a: a, b: term() }; }
+        else if (isSym("-") && !isSym(">", 1)) { p++; a = { t: "bin", op: "-", a: a, b: term() }; }
+        else return a;
+      }
     }
-    if (!toks.length) return null;
-    var lhs = expr(), t = peek(), op = null, rhs = null;
-    if (t && t.k === "op" && ["=", "<", ">", "<=", ">=", "->"].indexOf(t.v) >= 0) { p++; op = t.v; rhs = expr(); }
-    if (p < toks.length) throw new GraphError("unexpected “" + toks[p].v + "”");
+    function relation() {
+      var t = tok();
+      if (!t) return null;
+      if (t.k === "sym") {
+        if (t.v === "=") { p++; return "="; }
+        if (t.v === "<" || t.v === ">") { p++; if (isSym("=")) { p++; return t.v + "="; } return t.v; }
+        if (t.v === "-" && isSym(">", 1)) { p += 2; return "->"; }
+        return null;
+      }
+      if (t.k === "cmd") {
+        var map = { le: "<=", leq: "<=", leqslant: "<=", ge: ">=", geq: ">=", geqslant: ">=", lt: "<", gt: ">", to: "->", rightarrow: "->", mapsto: "->", longrightarrow: "->" };
+        if (map[t.v]) { p++; return map[t.v]; }
+      }
+      return null;
+    }
+
+    if (!T.length) return null;
+    var lhs = expr(), op = relation(), rhs = null;
+    if (op) rhs = expr();
+    if (p < T.length) {
+      var bad = T[p];
+      if (bad.k === "cmd" && bad.v === "placeholder") throw new GraphError("fill in the empty box");
+      throw new GraphError("unexpected “" + (bad.k === "cmd" ? "\\" + bad.v : bad.v) + "”");
+    }
     return { op: op, lhs: lhs, rhs: rhs };
+  }
+
+  function userFnNames(latex) {
+    var m = /^\s*([A-Za-z])(?:_\{?([A-Za-z0-9]+)\}?)?\s*(?:\\left)?\(/.exec(latex);
+    if (!m || latex.indexOf("=") < 0) return null;
+    var name = m[1] + (m[2] ? "_" + m[2] : "");
+    return RESERVED[name] ? null : name;
+  }
+
+  function nameLatex(n) {
+    var parts = n.split("_"), head = parts[0];
+    head = head === "θ" ? "\\theta" : GREEK[head] ? "\\" + head : head;
+    return parts.length > 1 ? head + "_{" + parts.slice(1).join("_") + "}" : head;
   }
 
   // =====================================================================
   // AST helpers
   // =====================================================================
 
+  var BOUND = { int: 1, sum: 1, prod: 1 };
+
+  function without(map, v) {
+    if (!map.hasOwnProperty(v)) return map;
+    var m = {};
+    for (var k in map) if (k !== v) m[k] = map[k];
+    return m;
+  }
+
   function substitute(n, map) {
     switch (n.t) {
       case "var": return map.hasOwnProperty(n.n) ? map[n.n] : n;
       case "neg": case "fact": return { t: n.t, a: substitute(n.a, map) };
       case "bin": return { t: "bin", op: n.op, a: substitute(n.a, map), b: substitute(n.b, map) };
-      case "call": case "ucall": return { t: n.t, f: n.f, n: n.n, args: n.args.map(function (x) { return substitute(x, map); }) };
+      case "call": return { t: "call", f: n.f, args: n.args.map(function (x) { return substitute(x, map); }) };
+      case "ucall": return { t: "ucall", n: n.n, primes: n.primes, args: n.args.map(function (x) { return substitute(x, map); }) };
       case "tuple": return { t: "tuple", items: n.items.map(function (x) { return substitute(x, map); }) };
+      case "int": case "sum": case "prod":
+        return { t: n.t, v: n.v, lo: substitute(n.lo, map), hi: substitute(n.hi, map), a: substitute(n.a, without(map, n.v)) };
+      case "deriv": case "nderiv":
+        return { t: n.t, v: n.v, a: substitute(n.a, map) };
       default: return n;
     }
   }
@@ -154,15 +440,29 @@
       case "ucall":
         var def = fns[n.n];
         if (n.args.length !== def.params.length) throw new GraphError(n.n + " takes " + def.params.length + " input" + (def.params.length > 1 ? "s" : ""));
+        var body = inline(def.body, fns, depth + 1);
+        if (n.primes) {
+          if (def.params.length !== 1) throw new GraphError("′ only works on functions of one variable");
+          for (var k = 0; k < n.primes; k++) body = derivative(body, def.params[0]);
+        }
         var map = {};
         def.params.forEach(function (prm, k) { map[prm] = inline(n.args[k], fns, depth); });
-        return inline(substitute(def.body, map), fns, depth + 1);
+        return substitute(body, map);
       case "neg": case "fact": return { t: n.t, a: inline(n.a, fns, depth) };
       case "bin": return { t: "bin", op: n.op, a: inline(n.a, fns, depth), b: inline(n.b, fns, depth) };
       case "call": return { t: "call", f: n.f, args: n.args.map(function (x) { return inline(x, fns, depth); }) };
       case "tuple": return { t: "tuple", items: n.items.map(function (x) { return inline(x, fns, depth); }) };
+      case "int": case "sum": case "prod":
+        return { t: n.t, v: n.v, lo: inline(n.lo, fns, depth), hi: inline(n.hi, fns, depth), a: inline(n.a, fns, depth) };
+      case "deriv": return derivative(inline(n.a, fns, depth), n.v);
       default: return n;
     }
+  }
+
+  // Symbolic derivative where possible; otherwise a numeric-derivative node (real graphs only).
+  function derivative(a, v) {
+    try { return simplify(diff(a, v)); }
+    catch (e) { return { t: "nderiv", v: v, a: a }; }
   }
 
   function freeVars(n, out) {
@@ -173,18 +473,103 @@
       case "bin": freeVars(n.a, out); freeVars(n.b, out); break;
       case "call": case "ucall": n.args.forEach(function (x) { freeVars(x, out); }); break;
       case "tuple": n.items.forEach(function (x) { freeVars(x, out); }); break;
+      case "int": case "sum": case "prod":
+        freeVars(n.lo, out); freeVars(n.hi, out);
+        var inner = freeVars(n.a, {});
+        for (var k in inner) if (k !== n.v) out[k] = 1;
+        break;
+      case "nderiv": freeVars(n.a, out); out[n.v] = 1; break;
     }
     return out;
   }
 
-  function hasI(n) {
+  function depends(n, v) { return !!freeVars(n)[v]; }
+
+  // ---------- symbolic differentiation ----------
+  var ZERO = { t: "num", v: 0 }, ONE = { t: "num", v: 1 };
+  function num(v) { return { t: "num", v: v }; }
+  function add(a, b) { return { t: "bin", op: "+", a: a, b: b }; }
+  function sub(a, b) { return { t: "bin", op: "-", a: a, b: b }; }
+  function mul(a, b) { return { t: "bin", op: "*", a: a, b: b }; }
+  function dv(a, b) { return { t: "bin", op: "/", a: a, b: b }; }
+  function pw(a, b) { return { t: "bin", op: "^", a: a, b: b }; }
+  function fn(f, a) { return { t: "call", f: f, args: [a] }; }
+  function neg(a) { return { t: "neg", a: a }; }
+
+  function diff(n, v) {
+    if (!depends(n, v)) return ZERO;
     switch (n.t) {
-      case "i": return true;
-      case "neg": case "fact": return hasI(n.a);
-      case "bin": return hasI(n.a) || hasI(n.b);
-      case "call": case "ucall": return n.args.some(hasI);
-      case "tuple": return n.items.some(hasI);
-      default: return false;
+      case "var": return ONE;
+      case "neg": return neg(diff(n.a, v));
+      case "bin":
+        var a = n.a, b = n.b, da = diff(a, v), db = diff(b, v);
+        if (n.op === "+") return add(da, db);
+        if (n.op === "-") return sub(da, db);
+        if (n.op === "*") return add(mul(da, b), mul(a, db));
+        if (n.op === "/") return dv(sub(mul(da, b), mul(a, db)), pw(b, num(2)));
+        if (!depends(b, v)) return mul(mul(b, pw(a, sub(b, ONE))), da);
+        if (!depends(a, v)) return mul(mul(n, fn("ln", a)), db);
+        return mul(n, add(mul(db, fn("ln", a)), dv(mul(b, da), a)));
+      case "call":
+        if (n.args.length !== 1) throw new GraphError("can't differentiate " + n.f);
+        var u = n.args[0], du = diff(u, v);
+        var outer;
+        switch (n.f) {
+          case "sin": outer = fn("cos", u); break;
+          case "cos": outer = neg(fn("sin", u)); break;
+          case "tan": outer = pw(fn("sec", u), num(2)); break;
+          case "sec": outer = mul(fn("sec", u), fn("tan", u)); break;
+          case "csc": outer = neg(mul(fn("csc", u), fn("cot", u))); break;
+          case "cot": outer = neg(pw(fn("csc", u), num(2))); break;
+          case "asin": outer = dv(ONE, fn("sqrt", sub(ONE, pw(u, num(2))))); break;
+          case "acos": outer = neg(dv(ONE, fn("sqrt", sub(ONE, pw(u, num(2)))))); break;
+          case "atan": outer = dv(ONE, add(ONE, pw(u, num(2)))); break;
+          case "sinh": outer = fn("cosh", u); break;
+          case "cosh": outer = fn("sinh", u); break;
+          case "tanh": outer = sub(ONE, pw(fn("tanh", u), num(2))); break;
+          case "exp": outer = fn("exp", u); break;
+          case "ln": outer = dv(ONE, u); break;
+          case "log": outer = dv(ONE, mul(u, num(Math.LN10))); break;
+          case "sqrt": outer = dv(ONE, mul(num(2), fn("sqrt", u))); break;
+          case "cbrt": outer = dv(ONE, mul(num(3), pw(fn("cbrt", u), num(2)))); break;
+          case "abs": outer = fn("sign", u); break;
+          default: throw new GraphError("can't differentiate " + n.f);
+        }
+        return mul(outer, du);
+    }
+    throw new GraphError("can't differentiate this");
+  }
+
+  function isNum(n, v) { return n.t === "num" && (v === undefined || n.v === v); }
+
+  function simplify(n) {
+    switch (n.t) {
+      case "neg":
+        var a0 = simplify(n.a);
+        if (isNum(a0)) return num(-a0.v);
+        if (a0.t === "neg") return a0.a;
+        return neg(a0);
+      case "bin":
+        var a = simplify(n.a), b = simplify(n.b);
+        if (isNum(a) && isNum(b) && n.op !== "^") {
+          return num(n.op === "+" ? a.v + b.v : n.op === "-" ? a.v - b.v : n.op === "*" ? a.v * b.v : a.v / b.v);
+        }
+        switch (n.op) {
+          case "+": if (isNum(a, 0)) return b; if (isNum(b, 0)) return a; break;
+          case "-": if (isNum(b, 0)) return a; if (isNum(a, 0)) return neg(b); break;
+          case "*":
+            if (isNum(a, 0) || isNum(b, 0)) return ZERO;
+            if (isNum(a, 1)) return b; if (isNum(b, 1)) return a;
+            break;
+          case "/": if (isNum(a, 0)) return ZERO; if (isNum(b, 1)) return a; break;
+          case "^":
+            if (isNum(b, 0)) return ONE; if (isNum(b, 1)) return a;
+            if (isNum(a) && isNum(b)) return num(realPow(a.v, b.v));
+            break;
+        }
+        return { t: "bin", op: n.op, a: a, b: b };
+      case "call": return { t: "call", f: n.f, args: n.args.map(simplify) };
+      default: return n;
     }
   }
 
@@ -242,15 +627,72 @@
   }
 
   // Real-only helpers shared by the compiled real functions and the complex evaluator.
+  var GK_X = [0.991455371120812639, 0.949107912342758525, 0.864864423359769073, 0.741531185599394440, 0.586087235467691130, 0.405845151377397167, 0.207784955007898468, 0];
+  var GK_W = [0.022935322010529225, 0.063092092629978553, 0.104790010322250184, 0.140653259715525919, 0.169004726639267903, 0.190350578064785410, 0.204432940075298892, 0.209482141084727828];
+  var G_W = [0.129484966168869693, 0.279705391489276668, 0.381830050505118945, 0.417959183673469388];
+
+  function gk15(f, a, b) {
+    var c = (a + b) / 2, h = (b - a) / 2, fc = f(c), k = fc * GK_W[7], g = fc * G_W[3];
+    for (var j = 0; j < 7; j++) {
+      var dx = h * GK_X[j], s = f(c - dx) + f(c + dx);
+      k += GK_W[j] * s;
+      if (j % 2 === 1) g += G_W[(j - 1) / 2] * s;
+    }
+    return { v: k * h, err: Math.abs((k - g) * h) };
+  }
+
+  // Adaptive Gauss-Kronrod; infinite limits are mapped onto finite ones.
+  function integrate(f, a, b) {
+    if (a === b) return 0;
+    if (a > b) return -integrate(f, b, a);
+    if (a === -Infinity && b === Infinity) return integrate(f, -Infinity, 0) + integrate(f, 0, Infinity);
+    var g = f, lo = a, hi = b;
+    if (b === Infinity) { g = function (t) { var u = 1 - t; return f(a + t / u) / (u * u); }; lo = 0; hi = 1; }
+    else if (a === -Infinity) { g = function (t) { var u = 1 - t; return f(b - t / u) / (u * u); }; lo = 0; hi = 1; }
+    var stack = [[lo, hi]], total = 0, count = 0;
+    while (stack.length) {
+      var iv = stack.pop(), r = gk15(g, iv[0], iv[1]);
+      if (r.v !== r.v) return NaN;
+      if (r.err <= 1e-10 * Math.max(1, Math.abs(r.v)) || count > 400 || iv[1] - iv[0] < 1e-12 * (hi - lo)) total += r.v;
+      else { var m = (iv[0] + iv[1]) / 2; stack.push([iv[0], m], [m, iv[1]]); }
+      count++;
+    }
+    return total;
+  }
+
+  function series(f, a, b, prod) {
+    a = Math.round(a); b = Math.round(b);
+    if (!isFinite(a) || !isFinite(b) || b - a > 1e6) return NaN;
+    var acc = prod ? 1 : 0;
+    for (var k = a; k <= b; k++) acc = prod ? acc * f(k) : acc + f(k);
+    return acc;
+  }
+
   var RX = {
     P: realPow,
     F: function (n) {
       if (n === Math.round(n)) { if (n < 0) return NaN; if (n > 170) return Infinity; var r = 1; for (var k = 2; k <= n; k++) r *= k; return r; }
       return gamma(n + 1);
     },
+    I: integrate,
+    S: function (f, a, b) { return series(f, a, b, false); },
+    Pr: function (f, a, b) { return series(f, a, b, true); },
+    D: function (f, x) {
+      var h = 1e-3 * Math.max(1, Math.abs(x));
+      return (f(x - 2 * h) - 8 * f(x - h) + 8 * f(x + h) - f(x + 2 * h)) / (12 * h);
+    },
+    nCr: function (n, r) {
+      if (n === Math.round(n) && r === Math.round(r)) {
+        if (r < 0 || r > n) return 0;
+        var out = 1;
+        for (var k = 1; k <= Math.min(r, n - r); k++) out = out * (n - k + 1) / k;
+        return Math.round(out);
+      }
+      return gamma(n + 1) / (gamma(r + 1) * gamma(n - r + 1));
+    },
     sin: Math.sin, cos: Math.cos, tan: Math.tan,
     sec: function (x) { return 1 / Math.cos(x); }, csc: function (x) { return 1 / Math.sin(x); }, cot: function (x) { return 1 / Math.tan(x); },
-    asin: function (x, y) { return Math.asin(x); }, acos: Math.acos,
+    asin: function (x) { return Math.asin(x); }, acos: Math.acos,
     atan: function (y, x) { return x === undefined ? Math.atan(y) : Math.atan2(y, x); },
     sinh: Math.sinh, cosh: Math.cosh, tanh: Math.tanh, exp: Math.exp, ln: Math.log, log: Math.log10,
     sqrt: Math.sqrt, cbrt: Math.cbrt, abs: Math.abs, floor: Math.floor, ceil: Math.ceil, round: Math.round, sign: Math.sign,
@@ -260,12 +702,18 @@
     arg: function (x) { return x < 0 ? Math.PI : 0; }
   };
 
+  function withVar(env, v, val) {
+    var e = Object.create(env);
+    e[v] = val;
+    return e;
+  }
+
   function evalC(n, env) {
     switch (n.t) {
       case "num": return [n.v, 0];
       case "i": return [0, 1];
       case "var":
-        if (env.hasOwnProperty(n.n)) return env[n.n];
+        if (n.n in env) return env[n.n];
         throw new GraphError(n.n + " isn't defined", [n.n]);
       case "neg": var a = evalC(n.a, env); return [0 - a[0], 0 - a[1]];
       case "fact":
@@ -280,9 +728,29 @@
         if (Cx[n.f] && as.length === 1) return Cx[n.f](as[0]);
         if (as.some(function (q) { return q[1] !== 0; })) throw new GraphError(n.f + " needs real numbers");
         return [RX[n.f].apply(null, as.map(function (q) { return q[0]; })), 0];
+      case "int":
+        var lo = realOf(evalC(n.lo, env), "limits"), hi = realOf(evalC(n.hi, env), "limits");
+        return [integrate(function (t) { return realOf(evalC(n.a, withVar(env, n.v, [t, 0])), "integral"); }, lo, hi), 0];
+      case "sum": case "prod":
+        var s0 = Math.round(realOf(evalC(n.lo, env), "limits")), s1 = Math.round(realOf(evalC(n.hi, env), "limits"));
+        if (s1 - s0 > 1e6) throw new GraphError("too many terms");
+        var acc = n.t === "sum" ? [0, 0] : [1, 0];
+        for (var k = s0; k <= s1; k++) {
+          var term = evalC(n.a, withVar(env, n.v, [k, 0]));
+          acc = n.t === "sum" ? Cx.add(acc, term) : Cx.mul(acc, term);
+        }
+        return acc;
+      case "nderiv":
+        var x0 = realOf(evalC({ t: "var", n: n.v }, env), "derivative");
+        return [RX.D(function (t) { return realOf(evalC(n.a, withVar(env, n.v, [t, 0])), "derivative"); }, x0), 0];
       case "tuple": throw new GraphError("a point can't go here");
     }
     throw new GraphError("can't evaluate this");
+  }
+
+  function realOf(c, what) {
+    if (c[1] !== 0) throw new GraphError("the " + what + " must be real");
+    return c[0];
   }
 
   // =====================================================================
@@ -296,42 +764,52 @@
     return v < 0 ? "(" + v + ")" : String(v);
   }
 
+  function jsName(n) { return "v_" + n.replace(/[^A-Za-z0-9]/g, function (c) { return "$" + c.charCodeAt(0); }); }
+
   function genR(n, vars, consts) {
+    function g(q) { return genR(q, vars, consts); }
+    function bound(v) { var vs = Object.create(vars); vs[v] = jsName(v); return vs; }
     switch (n.t) {
       case "num": return lit(n.v);
       case "i": throw new GraphError("i only works with z (complex mode)");
       case "var":
-        if (vars.hasOwnProperty(n.n)) return vars[n.n];
+        if (n.n in vars) return vars[n.n];
         if (consts.hasOwnProperty(n.n)) {
           var c = consts[n.n];
           if (c[1] !== 0) throw new GraphError(n.n + " is complex, so it can only be used with z");
           return lit(c[0]);
         }
         throw new GraphError(n.n + " isn't defined", [n.n]);
-      case "neg": return "(-" + genR(n.a, vars, consts) + ")";
-      case "fact": return "H.F(" + genR(n.a, vars, consts) + ")";
+      case "neg": return "(-" + g(n.a) + ")";
+      case "fact": return "H.F(" + g(n.a) + ")";
       case "bin":
-        var a = genR(n.a, vars, consts);
+        var a = g(n.a);
         if (n.op === "^") {
           if (n.b.t === "num" && n.b.v === 2) return "(" + a + "*" + a + ")";
-          return "H.P(" + a + "," + genR(n.b, vars, consts) + ")";
+          return "H.P(" + a + "," + g(n.b) + ")";
         }
-        return "(" + a + n.op + genR(n.b, vars, consts) + ")";
+        return "(" + a + n.op + g(n.b) + ")";
       case "call":
-        return "H." + n.f + "(" + n.args.map(function (q) { return genR(q, vars, consts); }).join(",") + ")";
+        return "H." + n.f + "(" + n.args.map(g).join(",") + ")";
+      case "int": case "sum": case "prod":
+        var helper = n.t === "int" ? "H.I" : n.t === "sum" ? "H.S" : "H.Pr";
+        return helper + "(function(" + jsName(n.v) + "){return " + genR(n.a, bound(n.v), consts) + ";}," + g(n.lo) + "," + g(n.hi) + ")";
+      case "nderiv":
+        if (!(n.v in vars)) throw new GraphError("d/d" + n.v + " needs " + n.v + " to be the graph's variable");
+        return "H.D(function(" + jsName(n.v) + "){return " + genR(n.a, bound(n.v), consts) + ";}," + vars[n.v] + ")";
       case "tuple": throw new GraphError("a point can't go here");
     }
     throw new GraphError("can't compile this");
   }
 
   function compileReal1(n, p, consts) {
-    var vars = {}; vars[p] = p === "θ" ? "q" : p;
+    var vars = {}; vars[p] = jsName(p);
     var f = new Function("H", vars[p], "return " + genR(n, vars, consts) + ";");
     return function (v) { return f(RX, v); };
   }
 
   function compileReal2(n, consts) {
-    var f = new Function("H", "x", "y", "return " + genR(n, { x: "x", y: "y" }, consts) + ";");
+    var f = new Function("H", "v_x", "v_y", "return " + genR(n, { x: "v_x", y: "v_y" }, consts) + ";");
     return function (x, y) { return f(RX, x, y); };
   }
 
@@ -381,6 +859,7 @@
         a = this.gen(n.a);
         return this.pair("-" + a.r, "-" + a.i);
       case "fact": throw new GraphError("! doesn't work on complex numbers");
+      case "int": case "sum": case "prod": case "nderiv": throw new GraphError("integrals and sums can't use z yet");
       case "bin":
         a = this.gen(n.a);
         if (n.op === "^") return this.pow(a, n.b);
@@ -490,8 +969,8 @@
   function compileAll() {
     var userFns = {}, fns = {}, constAst = {}, owner = {};
     rows.forEach(function (r) {
-      var m = /^\s*([A-Za-z](?:_[A-Za-z0-9]+)?)\s*\(\s*[A-Za-zθ]/.exec(r.src);
-      if (m && /=/.test(r.src) && !RESERVED[m[1]]) userFns[m[1]] = 1;
+      var name = userFnNames(r.src);
+      if (name) userFns[name] = 1;
     });
 
     rows.forEach(function (r) {
@@ -687,54 +1166,113 @@
 
   function el(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
 
+  var GREEK_SC = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa", "lambda", "mu", "nu",
+    "rho", "sigma", "tau", "phi", "chi", "omega", "Gamma", "Delta", "Lambda", "Phi", "Omega"];
+  var SHORTCUTS = (function () {
+    var s = {
+      pi: "\\pi", infinity: "\\infty", infty: "\\infty",
+      sqrt: "\\sqrt{#?}", cbrt: "\\sqrt[3]{#?}", nthroot: "\\sqrt[#?]{#?}",
+      int: "\\int_{#?}^{#?}", sum: "\\sum_{#?}^{#?}", prod: "\\prod_{#?}^{#?}",
+      sin: "\\sin", cos: "\\cos", tan: "\\tan", sec: "\\sec", csc: "\\csc", cot: "\\cot",
+      arcsin: "\\arcsin", arccos: "\\arccos", arctan: "\\arctan",
+      sinh: "\\sinh", cosh: "\\cosh", tanh: "\\tanh", exp: "\\exp", ln: "\\ln", log: "\\log",
+      abs: "\\left|#?\\right|", Re: "\\operatorname{Re}", Im: "\\operatorname{Im}", arg: "\\arg", conj: "\\overline{#?}",
+      sign: "\\operatorname{sign}", floor: "\\left\\lfloor#?\\right\\rfloor", ceil: "\\left\\lceil#?\\right\\rceil",
+      mod: "\\operatorname{mod}", nCr: "\\operatorname{nCr}", min: "\\min", max: "\\max",
+      dx: "\\differentialD x", dy: "\\differentialD y", dt: "\\differentialD t",
+      "<=": "\\le", ">=": "\\ge", "*": "\\cdot"
+    };
+    GREEK_SC.forEach(function (g) { s[g] = "\\" + g; });
+    return s;
+  })();
+
+  function configField(mf) {
+    mf.inlineShortcuts = SHORTCUTS;
+    mf.smartFence = true;
+    mf.smartSuperscript = true;
+    mf.smartMode = false;
+    mf.mathVirtualKeyboardPolicy = "auto";
+    try { mf.menuItems = []; } catch (e) {}
+  }
+
+  function blankRow() {
+    var nr = newRow("", { color: nextColor() });
+    rows.push(nr);
+    rowsEl.appendChild(buildRow(nr));
+    return nr;
+  }
+
+  function focusRow(r, atStart) {
+    if (!r.mounted) { r.focusOnMount = true; return; }
+    var mf = r.el.input;
+    mf.focus();
+    try { mf.position = atStart ? 0 : mf.lastOffset; } catch (e) {}
+  }
+
   function buildRow(r) {
     var wrap = el("div", "row");
     var sw = el("button", "sw");
     sw.type = "button";
     sw.title = "show or hide";
-    sw.addEventListener("click", function () { r.hidden = !r.hidden; changed(); });
+    sw.addEventListener("click", function () { r.hidden = !r.hidden; changed(null); });
     var body = el("div", "rb");
-    var input = el("input", "src");
-    input.type = "text";
-    input.spellcheck = false;
-    input.autocomplete = "off";
-    input.setAttribute("autocapitalize", "off");
-    input.value = r.src;
-    input.addEventListener("input", function () {
-      r.src = input.value;
-      if (rows[rows.length - 1] === r && r.src) { var nr = newRow("", { color: nextColor() }); rows.push(nr); rowsEl.appendChild(buildRow(nr)); }
-      changed();
+    var mf = document.createElement("math-field");
+    mf.className = "src";
+    mf.textContent = r.src;
+    // MathLive only accepts settings once the field is attached to the page.
+    mf.addEventListener("mount", function () {
+      configField(mf);
+      r.mounted = true;
+      if (r.focusOnMount) { r.focusOnMount = false; focusRow(r, false); }
+    }, { once: true });
+    mf.addEventListener("input", function () {
+      r.src = mf.value;
+      if (rows[rows.length - 1] === r && r.src) blankRow();
+      changed("type:" + r.id);
     });
-    input.addEventListener("keydown", function (e) { rowKeys(e, r, input); });
+    mf.addEventListener("keydown", function (e) { rowKeys(e, r, mf); }, true);
+    mf.addEventListener("move-out", function (e) {
+      var d = e.detail && e.detail.direction, k = rows.indexOf(r);
+      if (d === "downward" && k < rows.length - 1) { e.preventDefault(); focusRow(rows[k + 1], true); }
+      else if (d === "upward" && k > 0) { e.preventDefault(); focusRow(rows[k - 1], false); }
+    });
     var ex = el("div", "ex");
-    body.appendChild(input);
+    body.appendChild(mf);
     body.appendChild(ex);
     var del = el("button", "del", SVG_X);
     del.type = "button";
     del.title = "delete";
     del.addEventListener("click", function () { removeRow(r, false); });
     wrap.appendChild(sw); wrap.appendChild(body); wrap.appendChild(del);
-    r.el = { wrap: wrap, sw: sw, input: input, ex: ex, sig: "" };
+    r.el = { wrap: wrap, sw: sw, input: mf, ex: ex, sig: "" };
     renderRow(r);
     return wrap;
   }
 
-  function rowKeys(e, r, input) {
+  function rowKeys(e, r, mf) {
     var k = rows.indexOf(r);
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === "Enter") {
-      e.preventDefault();
+      e.preventDefault(); e.stopPropagation();
       var nr = newRow("", { color: nextColor() });
       rows.splice(k + 1, 0, nr);
       rowsEl.insertBefore(buildRow(nr), r.el.wrap.nextSibling);
-      nr.el.input.focus();
-      changed();
-    } else if (e.key === "Backspace" && !input.value && rows.length > 1) {
-      e.preventDefault();
+      focusRow(nr, false);
+      changed(null);
+    } else if (e.key === "Backspace" && !mf.value && rows.length > 1) {
+      e.preventDefault(); e.stopPropagation();
       removeRow(r, true);
-    } else if (e.key === "ArrowUp" && k > 0) {
-      e.preventDefault(); rows[k - 1].el.input.focus();
-    } else if (e.key === "ArrowDown" && k < rows.length - 1) {
-      e.preventDefault(); rows[k + 1].el.input.focus();
+    } else if (e.key === "|") {
+      e.preventDefault(); e.stopPropagation();
+      mf.executeCommand(["insert", "\\left|#?\\right|", { selectionMode: "placeholder" }]);
+    } else if (e.key === ">") {
+      var prev = "";
+      try { prev = mf.getValue(mf.position - 1, mf.position); } catch (err) {}
+      if (prev === "-") {
+        e.preventDefault(); e.stopPropagation();
+        mf.executeCommand("deleteBackward");
+        mf.executeCommand(["insert", "\\to"]);
+      }
     }
   }
 
@@ -742,9 +1280,9 @@
     var k = rows.indexOf(r);
     rows.splice(k, 1);
     r.el.wrap.remove();
-    if (!rows.length || rows[rows.length - 1].src) { var nr = newRow("", { color: nextColor() }); rows.push(nr); rowsEl.appendChild(buildRow(nr)); }
-    if (focusPrev) { var prev = rows[Math.max(0, k - 1)]; prev.el.input.focus(); prev.el.input.setSelectionRange(prev.src.length, prev.src.length); }
-    changed();
+    if (!rows.length || rows[rows.length - 1].src) blankRow();
+    if (focusPrev) focusRow(rows[Math.max(0, k - 1)], false);
+    changed(null);
   }
 
   function renderAllRows() { rows.forEach(renderRow); }
@@ -783,7 +1321,7 @@
         lab.appendChild(document.createTextNode("iterations "));
         var it = el("input", "num");
         it.type = "text"; it.inputMode = "numeric"; it.value = r.iter;
-        it.addEventListener("change", function () { var v = parseInt(it.value, 10); if (v > 0) r.iter = Math.min(v, 100000); it.value = r.iter; changed(true); });
+        it.addEventListener("change", function () { var v = parseInt(it.value, 10); if (v > 0) r.iter = Math.min(v, 100000); it.value = r.iter; changed(null, true); });
         lab.appendChild(it);
         e.ex.appendChild(lab);
       }
@@ -822,12 +1360,17 @@
 
   function syncSlider(r, v) { r.el.range.value = v; }
 
+  function numLatex(v) {
+    var s = String(v);
+    return /e/.test(s) ? v.toFixed(12).replace(/0+$/, "").replace(/\.$/, "") : s;
+  }
+
   function setSlider(r, v) {
     var step = (r.sMax - r.sMin) / 1000, d = decimalsFor(step);
     v = parseFloat(v.toFixed(d));
-    r.src = r.res.name + " = " + fmt(v);
-    r.el.input.value = r.src;
-    changed();
+    r.src = nameLatex(r.res.name) + "=" + numLatex(v);
+    r.el.input.setValue(r.src, { silenceNotifications: true });
+    changed("slider:" + r.id);
   }
 
   function buildRange(r, v) {
@@ -837,7 +1380,7 @@
     lo.value = fmt(r.tMin); hi.value = fmt(r.tMax);
     function bound() {
       var a = parseFloat(lo.value), b = parseFloat(hi.value);
-      if (isFinite(a) && isFinite(b) && a < b) { r.tMin = a; r.tMax = b; changed(); }
+      if (isFinite(a) && isFinite(b) && a < b) { r.tMin = a; r.tMax = b; changed(null); }
       lo.value = fmt(r.tMin); hi.value = fmt(r.tMax);
     }
     lo.addEventListener("change", bound);
@@ -849,11 +1392,11 @@
   }
 
   function addSlider(name, after) {
-    var nr = newRow(name + " = 1", { color: nextColor() });
+    var nr = newRow(nameLatex(name) + "=1", { color: nextColor() });
     var k = rows.indexOf(after);
     rows.splice(k, 0, nr);
     rowsEl.insertBefore(buildRow(nr), after.el.wrap);
-    changed();
+    changed(null);
   }
 
   // Slider animation
@@ -1276,32 +1819,90 @@
   }
 
   // =====================================================================
-  // Change handling, persistence, examples
+  // Change handling, undo, persistence, examples
   // =====================================================================
 
-  function changed(fxOnly) {
+  function changed(key, fxOnly) {
     if (!fxOnly) compileAll();
     renderAllRows();
     dirtyPlot = true;
     fx.request(true);
     saveSoon();
+    record(key);
   }
+
+  function rowState(r) {
+    return { src: r.src, color: r.color, hidden: r.hidden, sMin: r.sMin, sMax: r.sMax, tMin: r.tMin, tMax: r.tMax, iter: r.iter };
+  }
+
+  // Undo history: one snapshot per action; typing in the same row is merged until it pauses.
+  var hist = [], histPos = -1, histKey = null, histTime = 0, restoring = false;
+  function snapshot() { return JSON.stringify(rows.filter(function (r) { return r.src.trim(); }).map(rowState)); }
+  function record(key) {
+    if (restoring) return;
+    var s = snapshot(), now = Date.now();
+    if (histPos >= 0 && hist[histPos] === s) return;
+    if (key && key === histKey && now - histTime < 1500 && histPos > 0 && histPos === hist.length - 1) hist[histPos] = s;
+    else {
+      hist.length = histPos + 1;
+      hist.push(s);
+      if (hist.length > 300) hist.shift();
+      histPos = hist.length - 1;
+    }
+    histKey = key;
+    histTime = now;
+  }
+  function resetHistory() { hist = [snapshot()]; histPos = 0; histKey = null; }
+  function restore(s) {
+    var active = rows.indexOf(rows.filter(function (r) { return r.el && r.el.wrap.contains(document.activeElement); })[0]);
+    restoring = true;
+    rows = JSON.parse(s).map(function (o) { return newRow(o.src, o); });
+    rows.push(newRow("", { color: nextColor() }));
+    rowsEl.innerHTML = "";
+    compileAll();
+    rows.forEach(function (r) { rowsEl.appendChild(buildRow(r)); });
+    changed(null);
+    restoring = false;
+    histKey = null;
+    if (active >= 0) focusRow(rows[Math.min(active, rows.length - 1)], false);
+  }
+  function undo() { if (histPos > 0) { histPos--; restore(hist[histPos]); } }
+  function redo() { if (histPos < hist.length - 1) { histPos++; restore(hist[histPos]); } }
+
+  window.addEventListener("keydown", function (e) {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    var k = e.key.toLowerCase();
+    if (k === "z" || k === "y") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (k === "z" && !e.shiftKey) undo(); else redo();
+    }
+  }, true);
 
   var saveTimer;
   function saveSoon() { clearTimeout(saveTimer); saveTimer = setTimeout(save, 300); }
   function save() {
     try {
       localStorage.setItem(STORE, JSON.stringify({
-        rows: rows.filter(function (r) { return r.src.trim(); }).map(function (r) {
-          return { src: r.src, color: r.color, hidden: r.hidden, sMin: r.sMin, sMax: r.sMax, tMin: r.tMin, tMax: r.tMax, iter: r.iter };
-        }),
+        v: 2,
+        rows: rows.filter(function (r) { return r.src.trim(); }).map(rowState),
         view: view, grid: showGrid
       }));
     } catch (e) {}
   }
 
-  function load(state) {
-    rows = (state.rows || []).map(function (o) { return newRow(o.src, o); });
+  // Older saves stored plain text like "y = sin x"; MathLive can read that as ASCIIMath.
+  function toLatex(src) {
+    try {
+      if (window.MathLive && MathLive.convertAsciiMathToLatex) return MathLive.convertAsciiMathToLatex(src.replace(/->/g, "→"));
+    } catch (e) {}
+    return src;
+  }
+
+  function load(state, keepHistory) {
+    var list = state.rows || [];
+    if (state.v !== 2) list = list.map(function (o) { var c = {}; for (var k in o) c[k] = o[k]; c.src = toLatex(o.src || ""); return c; });
+    rows = list.map(function (o) { return newRow(o.src, o); });
     rows.push(newRow("", { color: nextColor() }));
     if (state.view) { view.cx = state.view.cx; view.cy = state.view.cy; view.s = state.view.s; }
     if (typeof state.grid === "boolean") showGrid = state.grid;
@@ -1309,22 +1910,25 @@
     rowsEl.innerHTML = "";
     compileAll();
     rows.forEach(function (r) { rowsEl.appendChild(buildRow(r)); });
-    changed();
+    if (keepHistory) changed(null);
+    else { restoring = true; changed(null); restoring = false; resetHistory(); }
     viewChanged();
   }
 
   function fitView(cx, cy, width) { return { cx: cx, cy: cy, s: width / Math.max(W, 1) }; }
 
   var EXAMPLES = {
-    mandelbrot: function () { return { rows: [{ src: "z -> z^2 + c" }], view: fitView(-0.6, 0, 3.6) }; },
-    julia: function () { return { rows: [{ src: "a = -0.8", sMin: -1.5, sMax: 0.5 }, { src: "b = 0.156", sMin: -1, sMax: 1 }, { src: "c = a + b i" }, { src: "z -> z^2 + c" }], view: fitView(0, 0, 3.6) }; },
-    ship: function () { return { rows: [{ src: "z -> (|real(z)| + i |imag(z)|)^2 + c" }], view: fitView(-0.45, -0.5, 3.4) }; },
-    cubic: function () { return { rows: [{ src: "z -> z^3 + c" }], view: fitView(0, 0, 3.4) }; },
-    domain: function () { return { rows: [{ src: "w = (z^2 - 1)(z - 2 - i)^2 / (z^2 + 2 + 2i)" }], view: fitView(0, 0, 7) }; },
-    waves: function () { return { rows: [{ src: "a = 1", sMin: 0, sMax: 5 }, { src: "y = sin(a x)" }, { src: "y = cos x / a" }], view: fitView(0, 0, 16) }; },
-    implicit: function () { return { rows: [{ src: "(x^2 + y^2 - 1)^3 = x^2 y^3" }, { src: "x^2 + y^2 < 0.25" }], view: fitView(0, 0, 5) }; },
-    curves: function () { return { rows: [{ src: "r = cos(4θ)" }, { src: "(sin 3t, sin 4t)" }, { src: "(0.5, 0.5)" }], view: fitView(0, 0, 4) }; },
-    calculus: function () { return { rows: [{ src: "f(x) = x^3 - 3x" }, { src: "a = 1.5", sMin: -2.5, sMax: 2.5 }, { src: "y = f(a) + (3a^2 - 3)(x - a)" }, { src: "(a, f(a))" }], view: fitView(0, 0, 9) }; }
+    mandelbrot: function () { return { rows: [{ src: "z\\to z^2+c" }], view: fitView(-0.6, 0, 3.6) }; },
+    julia: function () { return { rows: [{ src: "a=-0.8", sMin: -1.5, sMax: 0.5 }, { src: "b=0.156", sMin: -1, sMax: 1 }, { src: "c=a+bi" }, { src: "z\\to z^2+c" }], view: fitView(0, 0, 3.6) }; },
+    ship: function () { return { rows: [{ src: "z\\to\\left(\\left|\\operatorname{Re}\\left(z\\right)\\right|+i\\left|\\operatorname{Im}\\left(z\\right)\\right|\\right)^2+c" }], view: fitView(-0.45, -0.5, 3.4) }; },
+    cubic: function () { return { rows: [{ src: "z\\to z^3+c" }], view: fitView(0, 0, 3.4) }; },
+    domain: function () { return { rows: [{ src: "w=\\frac{\\left(z^2-1\\right)\\left(z-2-i\\right)^2}{z^2+2+2i}" }], view: fitView(0, 0, 7) }; },
+    waves: function () { return { rows: [{ src: "a=1", sMin: 0, sMax: 5 }, { src: "y=\\sin\\left(ax\\right)" }, { src: "y=\\frac{\\cos x}{a}" }], view: fitView(0, 0, 16) }; },
+    implicit: function () { return { rows: [{ src: "\\left(x^2+y^2-1\\right)^3=x^2y^3" }, { src: "x^2+y^2<0.25" }], view: fitView(0, 0, 5) }; },
+    curves: function () { return { rows: [{ src: "r=\\cos\\left(4\\theta\\right)" }, { src: "\\left(\\sin3t,\\sin4t\\right)" }, { src: "\\left(0.5,0.5\\right)" }], view: fitView(0, 0, 4) }; },
+    calculus: function () { return { rows: [{ src: "f\\left(x\\right)=x^3-3x" }, { src: "a=1.5", sMin: -2.5, sMax: 2.5 }, { src: "y=f\\left(a\\right)+f'\\left(a\\right)\\left(x-a\\right)" }, { src: "\\left(a,f\\left(a\\right)\\right)" }], view: fitView(0, 0, 9) }; },
+    integral: function () { return { rows: [{ src: "f\\left(x\\right)=\\int_0^x\\sin\\left(t^2\\right)dt" }, { src: "y=\\sin\\left(x^2\\right)" }], view: fitView(0, 0, 10) }; },
+    fourier: function () { return { rows: [{ src: "N=5", sMin: 1, sMax: 40 }, { src: "y=\\frac{4}{\\pi}\\sum_{n=1}^N\\frac{\\sin\\left(\\left(2n-1\\right)x\\right)}{2n-1}" }], view: fitView(0, 0, 14) }; }
   };
 
   document.getElementById("examples").addEventListener("change", function (e) {
@@ -1333,19 +1937,21 @@
     if (!EXAMPLES[k]) return;
     var ex = EXAMPLES[k]();
     ex.rows.forEach(function (r, i) { r.color = i % PALETTE_LEN; });
-    load(ex);
+    ex.v = 2;
+    load(ex, true);
     save();
   });
   document.getElementById("clear").addEventListener("click", function () {
-    load({ rows: [], view: { cx: 0, cy: 0, s: 24 / Math.max(W, 1) }, grid: showGrid });
+    load({ v: 2, rows: [], view: { cx: 0, cy: 0, s: 24 / Math.max(W, 1) }, grid: showGrid }, true);
     save();
-    rows[0].el.input.focus();
+    focusRow(rows[0], false);
   });
 
   document.addEventListener("keydown", function (e) {
-    if (e.key === "/" && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
+    var tag = document.activeElement && document.activeElement.tagName;
+    if (e.key === "/" && !/^(INPUT|TEXTAREA|SELECT|MATH-FIELD)$/.test(tag)) {
       e.preventDefault();
-      rows[rows.length - 1].el.input.focus();
+      focusRow(rows[rows.length - 1], false);
     }
   });
 
@@ -1361,7 +1967,7 @@
   var saved = null;
   try { saved = JSON.parse(localStorage.getItem(STORE)); } catch (e) {}
   if (saved && saved.rows) load(saved);
-  else load({ rows: [], view: { cx: 0, cy: 0, s: 24 / Math.max(W, 1) } });
-  rows[0].el.input.placeholder = "y = sin x   or   z -> z^2 + c";
+  else load({ v: 2, rows: [], view: { cx: 0, cy: 0, s: 24 / Math.max(W, 1) } });
+  try { rows[0].el.input.placeholder = "y=\\sin x"; } catch (e) {}
   requestAnimationFrame(loop);
 })();

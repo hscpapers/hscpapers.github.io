@@ -63,17 +63,29 @@ body.graph-page {
 }
 .sw.off { background: transparent; }
 .rb { min-width: 0; }
-.src {
+math-field.src {
+  display: block;
   width: 100%;
-  padding: 11px 4px 11px 2px;
-  font: inherit;
-  font-size: 15px;
+  padding: 9px 4px 9px 2px;
+  font-size: 19px;
   color: var(--text);
   background: transparent;
   border: 0;
   outline: none;
+  --caret-color: var(--accent);
+  --selection-background-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  --contains-highlight-background-color: transparent;
+  --placeholder-color: var(--dim);
+  --placeholder-opacity: .5;
+  --smart-fence-opacity: 1;
+  --smart-fence-color: currentColor;
 }
-.src::placeholder { color: var(--dim); opacity: .6; }
+math-field.src:focus-within { outline: none; }
+math-field::part(menu-toggle) { display: none; }
+math-field::part(content) { padding: 0; }
+@media (pointer: fine) {
+  math-field::part(virtual-keyboard-toggle) { display: none; }
+}
 .del {
   width: 22px;
   height: 22px;
