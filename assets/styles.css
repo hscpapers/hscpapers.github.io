@@ -88,6 +88,9 @@ header.top {
 }
 #search::-webkit-search-cancel-button:hover { background: var(--text); }
 
+.navlink { flex: none; color: var(--dim); }
+.navlink:hover { color: var(--text); text-decoration: none; }
+
 #theme-toggle {
   flex: none;
   width: 3.4em;

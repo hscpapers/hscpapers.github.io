@@ -1,0 +1,175 @@
+body.graph-page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+.graph-top { padding-left: 16px; padding-right: 16px; }
+.graph-top .navlink { margin-left: auto; }
+
+.gapp {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 340px 1fr;
+}
+
+/* ---------- expression panel ---------- */
+.gpanel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+.gbar {
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.gbar select, .gbar button {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+.gbar select { flex: 1; min-width: 0; }
+.gbar button { cursor: pointer; color: var(--dim); }
+.gbar button:hover { color: var(--text); }
+
+#rows { flex: 1; overflow-y: auto; }
+
+.row {
+  display: grid;
+  grid-template-columns: 30px 1fr 26px;
+  align-items: start;
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid transparent;
+}
+.row:focus-within { border-left-color: var(--accent); background: var(--bg); }
+.sw {
+  width: 16px;
+  height: 16px;
+  margin: 13px 0 0 7px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--c);
+  background: var(--c);
+  cursor: pointer;
+}
+.sw.off { background: transparent; }
+.rb { min-width: 0; }
+.src {
+  width: 100%;
+  padding: 11px 4px 11px 2px;
+  font: inherit;
+  font-size: 15px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+.src::placeholder { color: var(--dim); opacity: .6; }
+.del {
+  width: 22px;
+  height: 22px;
+  margin-top: 10px;
+  padding: 5px;
+  color: var(--dim);
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  visibility: hidden;
+}
+.row:hover .del, .row:focus-within .del { visibility: visible; }
+.del:hover { color: var(--text); background: var(--hover); }
+.del svg, .play svg { display: block; width: 100%; height: 100%; }
+
+.ex { padding: 0 6px 0 2px; }
+.ex:empty { display: none; }
+.ex > * { margin-bottom: 9px; }
+.msg { color: var(--accent); font-size: .85em; }
+.msg.dim { color: var(--dim); }
+.val { color: var(--dim); text-align: right; font-variant-numeric: tabular-nums; }
+.chip {
+  margin-right: 6px;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: .8em;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.chip:hover { border-color: var(--accent); }
+
+.num {
+  width: 4.2em;
+  padding: 2px 4px;
+  font: inherit;
+  font-size: .85em;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.num:focus { outline: none; border-color: var(--accent); }
+.slider { display: flex; align-items: center; gap: 6px; }
+.slider input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.play {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 5px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+}
+.range, .inline { color: var(--dim); font-size: .85em; }
+
+/* ---------- canvas ---------- */
+.gstage { position: relative; min-width: 0; min-height: 0; background: var(--bg); overflow: hidden; }
+.gstage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#plot { touch-action: none; cursor: grab; }
+#plot:active { cursor: grabbing; }
+
+.gzoom {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.gzoom button {
+  width: 32px;
+  height: 32px;
+  padding: 7px;
+  font: inherit;
+  font-size: 17px;
+  line-height: 1;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.gzoom button:hover { background: var(--hover); }
+.gzoom svg { display: block; width: 100%; height: 100%; }
+#zgrid:not(.on) { color: var(--dim); }
+
+@media (max-width: 760px) {
+  .gapp { grid-template-columns: 1fr; grid-template-rows: minmax(0, 40%) 1fr; }
+  .gpanel { border-right: 0; border-bottom: 1px solid var(--border); }
+  .graph-top .crumbs { display: none; }
+}

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hscpapers graph</title>
+<meta name="description" content="Graphing calculator with complex numbers and fractals.">
+<script>try{var t=localStorage.getItem("papersdb-theme");if(!t)t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="preload" href="assets/fonts/merriweather-sans-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="assets/styles.css">
+<link rel="stylesheet" href="assets/graph.css">
+<script src="assets/graph.js" defer></script>
+</head>
+<body class="graph-page">
+<header class="top">
+  <div class="top-inner graph-top">
+    <a class="brand" href="./">hscpapers</a>
+    <nav class="crumbs"><span><span class="sep">/</span>graph</span></nav>
+    <a class="navlink" href="./">papers</a>
+    <button id="theme-toggle" type="button" aria-label="Toggle dark mode"></button>
+  </div>
+</header>
+<div class="gapp">
+  <aside class="gpanel">
+    <div class="gbar">
+      <select id="examples" aria-label="Examples">
+        <option value="">examples</option>
+        <option value="mandelbrot">Mandelbrot set</option>
+        <option value="julia">Julia set with sliders</option>
+        <option value="ship">Burning ship</option>
+        <option value="cubic">Cubic Mandelbrot</option>
+        <option value="domain">Domain colouring</option>
+        <option value="waves">Waves</option>
+        <option value="implicit">Implicit and inequalities</option>
+        <option value="curves">Polar and parametric</option>
+        <option value="calculus">Tangent line</option>
+      </select>
+      <button id="clear" type="button">clear</button>
+    </div>
+    <div id="rows"></div>
+  </aside>
+  <div class="gstage" id="stage">
+    <canvas id="fx"></canvas>
+    <canvas id="plot"></canvas>
+    <div class="gzoom">
+      <button id="zin" type="button" aria-label="Zoom in">+</button>
+      <button id="zout" type="button" aria-label="Zoom out">−</button>
+      <button id="zhome" type="button" aria-label="Reset view"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 7.5 8 3l5.5 4.5V13a.5.5 0 0 1-.5.5H9.5V10h-3v3.5H3a.5.5 0 0 1-.5-.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></button>
+      <button id="zgrid" class="on" type="button" aria-label="Toggle grid"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 5.5h12M2 10.5h12M5.5 2v12M10.5 2v12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button>
+    </div>
+  </div>
+</div>
+</body>
+</html>
