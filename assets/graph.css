@@ -179,6 +179,51 @@ math-field::part(content) { padding: 0; }
 .gzoom button:hover { background: var(--hover); }
 .gzoom svg { display: block; width: 100%; height: 100%; }
 #zgrid:not(.on) { color: var(--dim); }
+#zset.on { border-color: var(--accent); }
+
+/* ---------- settings menu ---------- */
+.gsettings {
+  position: absolute;
+  top: 12px;
+  right: 54px;
+  z-index: 5;
+  width: 270px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .12);
+}
+.gsettings[hidden] { display: none; }
+.gs-row { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
+.gs-row > span { width: 52px; flex: none; color: var(--dim); }
+.gs-row em { font-style: normal; color: var(--dim); }
+.gs-row input[type=text] {
+  width: 100%;
+  min-width: 0;
+  padding: 3px 6px;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.gs-row input[type=text]:focus { outline: none; border-color: var(--accent); }
+.gs-check { display: flex; align-items: center; gap: 8px; margin: 5px 0; cursor: pointer; }
+.gs-check input { accent-color: var(--accent); margin: 0; }
+.seg { display: flex; flex: 1; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg button {
+  flex: 1;
+  padding: 3px 0;
+  font: inherit;
+  color: var(--dim);
+  background: var(--bg);
+  border: 0;
+  cursor: pointer;
+}
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button.on { color: var(--text); background: var(--surface); box-shadow: inset 0 -2px 0 var(--accent); }
+.chip.on { border-color: var(--accent); color: var(--accent); }
 
 @media (max-width: 760px) {
   .gapp { grid-template-columns: 1fr; grid-template-rows: minmax(0, 40%) 1fr; }

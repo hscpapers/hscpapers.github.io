@@ -485,6 +485,31 @@
 
   function depends(n, v) { return !!freeVars(n)[v]; }
 
+  function hasI(n) {
+    switch (n.t) {
+      case "i": return true;
+      case "neg": case "fact": case "deriv": case "nderiv": return hasI(n.a);
+      case "bin": return hasI(n.a) || hasI(n.b);
+      case "call": case "ucall": return n.args.some(hasI);
+      case "tuple": return n.items.some(hasI);
+      case "int": case "sum": case "prod": return hasI(n.lo) || hasI(n.hi) || hasI(n.a);
+      default: return false;
+    }
+  }
+
+  // Holomorphic in z: built only from arithmetic and analytic functions (no |z|, Re, Im, arg, conj, x or y).
+  var ANALYTIC_FNS = { exp: 1, ln: 1, log: 1, sin: 1, cos: 1, tan: 1, sinh: 1, cosh: 1, tanh: 1, sqrt: 1 };
+  function isAnalytic(n) {
+    switch (n.t) {
+      case "num": case "i": return true;
+      case "var": return n.n !== "x" && n.n !== "y";
+      case "neg": return isAnalytic(n.a);
+      case "bin": return isAnalytic(n.a) && isAnalytic(n.b);
+      case "call": return !!ANALYTIC_FNS[n.f] && n.args.length === 1 && isAnalytic(n.args[0]);
+      default: return false;
+    }
+  }
+
   // ---------- symbolic differentiation ----------
   var ZERO = { t: "num", v: 0 }, ONE = { t: "num", v: 1 };
   function num(v) { return { t: "num", v: v }; }
@@ -513,7 +538,7 @@
       case "call":
         if (n.args.length !== 1) throw new GraphError("can't differentiate " + n.f);
         var u = n.args[0], du = diff(u, v);
-        var outer;
+        var outer, unit = ANG === 1 ? null : num(ANG), inv = ANG === 1 ? null : num(1 / ANG);
         switch (n.f) {
           case "sin": outer = fn("cos", u); break;
           case "cos": outer = neg(fn("sin", u)); break;
@@ -535,6 +560,8 @@
           case "abs": outer = fn("sign", u); break;
           default: throw new GraphError("can't differentiate " + n.f);
         }
+        if (TRIG[n.f] && unit) outer = mul(unit, outer);
+        if ((n.f === "asin" || n.f === "acos" || n.f === "atan") && inv) outer = mul(inv, outer);
         return mul(outer, du);
     }
     throw new GraphError("can't differentiate this");
@@ -660,13 +687,95 @@
     return total;
   }
 
+  // Levin u-transform of the first terms of a series: accelerates alternating and slowly converging sums.
+  // Higher orders lose accuracy to cancellation, so take the order where successive estimates agree best.
+  function levin(terms, partial) {
+    var prev = NaN, bestDiff = Infinity, best = NaN;
+    for (var k = 4; k < Math.min(terms.length, 22); k++) {
+      var num = 0, den = 0;
+      for (var j = 0; j <= k; j++) {
+        var w = (1 + j) * terms[j];
+        if (!w) return { ok: false };
+        var c = binom(k, j) * Math.pow((1 + j) / (1 + k), k - 1) * (j % 2 ? -1 : 1);
+        num += c * partial[j] / w;
+        den += c / w;
+      }
+      if (!den) return { ok: false };
+      var L = num / den, d = Math.abs(L - prev);
+      if (d < bestDiff) { bestDiff = d; best = L; }
+      prev = L;
+    }
+    return { ok: bestDiff <= 1e-9 * Math.max(1, Math.abs(best)), v: best };
+  }
+
+  function binom(n, k) {
+    var r = 1;
+    for (var i = 1; i <= k; i++) r = r * (n - k + i) / i;
+    return r;
+  }
+
+  // Σ term(k) for k = start, start+1, ... to infinity. NaN when it doesn't converge.
+  function sumToInfinity(term, start) {
+    var S = 0, small = 0, terms = [], partial = [];
+    for (var n = 0; n < 200000; n++) {
+      var t = term(start + n);
+      if (t !== t) return NaN;
+      S += t;
+      if (!isFinite(S)) return S;
+      if (n < 32) { terms.push(t); partial.push(S); }
+      if (t === 0 || Math.abs(t) <= 1e-16 * Math.abs(S)) { if (++small >= 10) return S; }
+      else small = 0;
+      if (n === 40) {
+        // Only trust acceleration when the terms are clearly shrinking towards 0.
+        var head = Math.max(Math.abs(terms[0]), Math.abs(terms[1]), Math.abs(terms[2]));
+        if (Math.abs(terms[31]) < 0.05 * head) {
+          var L = levin(terms, partial);
+          if (L.ok) return L.v;
+        }
+      }
+    }
+    return NaN;
+  }
+
+  function prodToInfinity(term, start) {
+    // Positive factors: sum the logs so the same acceleration applies (e.g. Wallis' product).
+    if (term(start) > 0) {
+      var L = sumToInfinity(function (k) { var t = term(k); return t > 0 ? Math.log(t) : NaN; }, start);
+      if (L === L) return Math.exp(L);
+    }
+    var P = 1, small = 0;
+    for (var n = 0; n < 200000; n++) {
+      var t = term(start + n);
+      if (t !== t) return NaN;
+      P *= t;
+      if (P === 0) return 0;
+      if (!isFinite(P)) return P;
+      if (Math.abs(t - 1) <= 1e-15) { if (++small >= 10) return P; }
+      else small = 0;
+    }
+    return NaN;
+  }
+
   function series(f, a, b, prod) {
+    if (a !== a || b !== b) return NaN;
+    var toInf = prod ? prodToInfinity : sumToInfinity;
+    if (a === -Infinity && b === Infinity) {
+      var right = toInf(f, 0), left = toInf(function (m) { return f(-m); }, 1);
+      return prod ? right * left : right + left;
+    }
+    if (b === Infinity) return toInf(f, Math.round(a));
+    if (a === -Infinity) return toInf(function (m) { return f(-m); }, -Math.round(b));
+    if (a === Infinity || b === -Infinity) return prod ? 1 : 0;
     a = Math.round(a); b = Math.round(b);
-    if (!isFinite(a) || !isFinite(b) || b - a > 1e6) return NaN;
+    if (b - a > 1e6) return NaN;
     var acc = prod ? 1 : 0;
     for (var k = a; k <= b; k++) acc = prod ? acc * f(k) : acc + f(k);
     return acc;
   }
+
+  // Angle unit for trig functions: 1 for radians, π/180 in degree mode.
+  var ANG = 1;
+  var TRIG = { sin: 1, cos: 1, tan: 1, sec: 1, csc: 1, cot: 1 };
 
   var RX = {
     P: realPow,
@@ -690,10 +799,10 @@
       }
       return gamma(n + 1) / (gamma(r + 1) * gamma(n - r + 1));
     },
-    sin: Math.sin, cos: Math.cos, tan: Math.tan,
-    sec: function (x) { return 1 / Math.cos(x); }, csc: function (x) { return 1 / Math.sin(x); }, cot: function (x) { return 1 / Math.tan(x); },
-    asin: function (x) { return Math.asin(x); }, acos: Math.acos,
-    atan: function (y, x) { return x === undefined ? Math.atan(y) : Math.atan2(y, x); },
+    sin: function (x) { return Math.sin(x * ANG); }, cos: function (x) { return Math.cos(x * ANG); }, tan: function (x) { return Math.tan(x * ANG); },
+    sec: function (x) { return 1 / Math.cos(x * ANG); }, csc: function (x) { return 1 / Math.sin(x * ANG); }, cot: function (x) { return 1 / Math.tan(x * ANG); },
+    asin: function (x) { return Math.asin(x) / ANG; }, acos: function (x) { return Math.acos(x) / ANG; },
+    atan: function (y, x) { return (x === undefined ? Math.atan(y) : Math.atan2(y, x)) / ANG; },
     sinh: Math.sinh, cosh: Math.cosh, tanh: Math.tanh, exp: Math.exp, ln: Math.log, log: Math.log10,
     sqrt: Math.sqrt, cbrt: Math.cbrt, abs: Math.abs, floor: Math.floor, ceil: Math.ceil, round: Math.round, sign: Math.sign,
     min: Math.min, max: Math.max,
@@ -725,6 +834,7 @@
         return n.op === "+" ? Cx.add(x, y) : n.op === "-" ? Cx.sub(x, y) : n.op === "*" ? Cx.mul(x, y) : n.op === "/" ? Cx.div(x, y) : Cx.pow(x, y);
       case "call":
         var as = n.args.map(function (q) { return evalC(q, env); });
+        if (TRIG[n.f] && ANG !== 1 && as.length === 1) as[0] = [as[0][0] * ANG, as[0][1] * ANG];
         if (Cx[n.f] && as.length === 1) return Cx[n.f](as[0]);
         if (as.some(function (q) { return q[1] !== 0; })) throw new GraphError(n.f + " needs real numbers");
         return [RX[n.f].apply(null, as.map(function (q) { return q[0]; })), 0];
@@ -732,7 +842,13 @@
         var lo = realOf(evalC(n.lo, env), "limits"), hi = realOf(evalC(n.hi, env), "limits");
         return [integrate(function (t) { return realOf(evalC(n.a, withVar(env, n.v, [t, 0])), "integral"); }, lo, hi), 0];
       case "sum": case "prod":
-        var s0 = Math.round(realOf(evalC(n.lo, env), "limits")), s1 = Math.round(realOf(evalC(n.hi, env), "limits"));
+        var s0 = realOf(evalC(n.lo, env), "limits"), s1 = realOf(evalC(n.hi, env), "limits");
+        if (!isFinite(s0) || !isFinite(s1)) {
+          var termAt = function (k, part) { return evalC(n.a, withVar(env, n.v, [k, 0]))[part]; };
+          if (n.t === "prod") return [series(function (k) { return realOf(evalC(n.a, withVar(env, n.v, [k, 0])), "product"); }, s0, s1, true), 0];
+          return [series(function (k) { return termAt(k, 0); }, s0, s1, false), series(function (k) { return termAt(k, 1); }, s0, s1, false)];
+        }
+        s0 = Math.round(s0); s1 = Math.round(s1);
         if (s1 - s0 > 1e6) throw new GraphError("too many terms");
         var acc = n.t === "sum" ? [0, 0] : [1, 0];
         for (var k = s0; k <= s1; k++) {
@@ -817,7 +933,7 @@
   // Complex compiler -> scalar JS source for the workers
   // =====================================================================
 
-  function CGen(consts, pixelC) { this.lines = []; this.k = 0; this.consts = consts; this.pixelC = pixelC; }
+  function CGen(consts, pixelC, locus) { this.lines = []; this.k = 0; this.consts = consts; this.pixelC = pixelC; this.locus = locus; }
   CGen.prototype.tmp = function () { return "v" + this.k++; };
   CGen.prototype.pair = function (r, i) {
     var a = this.tmp(), b = this.tmp();
@@ -826,7 +942,7 @@
   };
   CGen.prototype.dynamic = function (n) {
     var fv = freeVars(n);
-    return fv.z || (fv.c && this.pixelC);
+    return fv.z || (fv.c && this.pixelC) || (this.locus && (fv.x || fv.y));
   };
   CGen.prototype.mul = function (a, b) {
     if (a.c && a.c[1] === 0) return this.pair(lit(a.c[0]) + "*" + b.r, lit(a.c[0]) + "*" + b.i);
@@ -854,6 +970,8 @@
     switch (n.t) {
       case "var":
         if (n.n === "z") return { r: "zr", i: "zi" };
+        if (this.locus && n.n === "x") return { r: "zr", i: "0" };
+        if (this.locus && n.n === "y") return { r: "zi", i: "0" };
         return { r: "cr", i: "ci" };
       case "neg":
         a = this.gen(n.a);
@@ -931,6 +1049,19 @@
       "if(n>=maxIter)return -1;if(!(m<Infinity))return n;var s=n+1-Math.log(0.5*Math.log(m))/lnDeg;return s>0?s:0;}";
   }
 
+  // f(z) as a JS function (zr, zi) -> [re, im], used for root finding.
+  function compileComplexZ(node, consts) {
+    var g = new CGen(consts, false), res = g.gen(node);
+    return new Function("return function(zr,zi){" + g.lines.join("") + "return [" + res.r + "," + res.i + "];}")();
+  }
+
+  // A relation in z = x + iy as a real function of (x, y); NaN where the value isn't real.
+  function compileLocus(node, consts) {
+    var g = new CGen(consts, false, true), res = g.gen(node);
+    return new Function("return function(x,y){var zr=x,zi=y;" + g.lines.join("") +
+      "var R=" + res.r + ",I=" + res.i + ";return Math.abs(I)<=1e-9*(1+Math.abs(R))?R:NaN;}")();
+  }
+
   function domainCode(rhs, consts) {
     var g = new CGen(consts, false), res = g.gen(rhs);
     return "function(pr,pi,out){var zr=pr,zi=pi;" + g.lines.join("") + "out[0]=" + res.r + ";out[1]=" + res.i + ";}";
@@ -951,9 +1082,11 @@
   var nextId = 1;
   var view = { cx: 0, cy: 0, s: 0.02 };
   var showGrid = true;
+  var settings = { grid: "square", minor: true, numbers: true, arrows: false, xLabel: "", yLabel: "",
+    degrees: false, complex: false, projector: false, lock: false };
 
   function newRow(src, opts) {
-    var r = { id: nextId++, src: src || "", color: 0, hidden: false, sMin: null, sMax: null, tMin: 0, tMax: 2 * Math.PI, iter: 300, playing: false, res: null };
+    var r = { id: nextId++, src: src || "", color: 0, hidden: false, sMin: null, sMax: null, tMin: 0, tMax: 2 * Math.PI, iter: 300, playing: false, arrow: false, step: 0, res: null };
     for (var k in opts || {}) r[k] = opts[k];
     return r;
   }
@@ -967,6 +1100,7 @@
   function isPlainNumber(n) { return n.t === "num" || (n.t === "neg" && n.a.t === "num"); }
 
   function compileAll() {
+    ANG = settings.degrees ? Math.PI / 180 : 1;
     var userFns = {}, fns = {}, constAst = {}, owner = {};
     rows.forEach(function (r) {
       var name = userFnNames(r.src);
@@ -1032,8 +1166,19 @@
     return Object.keys(fv).filter(function (v) { return allowed.indexOf(v) < 0 && !consts.hasOwnProperty(v); });
   }
 
+  // In complex mode a complex constant or value is also drawn as a point on the Argand plane.
+  function complexPoint(ast, val) {
+    return settings.complex && (val[1] !== 0 || hasI(ast)) && isFinite(val[0]) && isFinite(val[1]) ? val : null;
+  }
+  function realOnly(val) { return settings.complex || val[1] === 0 ? val : [NaN, 0]; }
+
   function classify(r, fns, consts, constAst, constErr) {
     var s = r.stmt;
+    var isFractal = s.op === "->";
+    var isDomain = (s.op === "=" && s.lhs.t === "var" && s.lhs.n === "w") || (!s.op && freeVars(s.lhs).z && !(s.lhs.t === "tuple"));
+    if (!settings.complex && !isFractal && !isDomain && (hasI(s.lhs) || (s.rhs && hasI(s.rhs)))) {
+      throw new GraphError("turn on complex mode in settings to use i");
+    }
 
     if (s.op === "=" && s.lhs.t === "ucall") {
       var p = r.def.params, body = inline(s.rhs, fns);
@@ -1049,7 +1194,7 @@
       if (constErr[name]) throw constErr[name];
       var val = consts[name];
       if (isPlainNumber(s.rhs)) return { kind: "slider", name: name, value: val[0] };
-      return { kind: "const", name: name, value: val };
+      return { kind: "const", name: name, value: realOnly(val), point: complexPoint(s.rhs, val) };
     }
 
     var lhs = s.lhs && inline(s.lhs, fns), rhs = s.rhs && inline(s.rhs, fns);
@@ -1082,9 +1227,25 @@
         checkVars(e, ["x"], consts);
         return { kind: "explicitY", f: compileReal1(e, "x", consts) };
       }
-      if (!missingOf(ev, [], consts).length) return { kind: "value", value: evalC(e, consts) };
+      if (!missingOf(ev, [], consts).length) {
+        var v = evalC(e, consts);
+        return { kind: "value", value: realOnly(v), point: complexPoint(e, v) };
+      }
       if (Object.keys(ev).some(function (v) { return RESERVED[v]; })) throw new GraphError("add = or < to graph this");
       checkVars(e, [], consts);
+    }
+
+    // Relations in z: roots of analytic equations, otherwise a locus of z = x + iy.
+    if (s.op && !isDomain) {
+      var rel = { t: "bin", op: "-", a: lhs, b: rhs }, relVars = freeVars(rel);
+      if (relVars.z) {
+        if (!settings.complex) throw new GraphError("turn on complex mode in settings to graph z");
+        checkVars(rel, ["z", "x", "y"], consts);
+        if (s.op === "=" && isAnalytic(rel)) {
+          return { kind: "roots", F: compileComplexZ(rel, consts), dF: compileComplexZ(derivative(rel, "z"), consts) };
+        }
+        return { kind: "implicit", op: s.op, F: compileLocus(rel, consts) };
+      }
     }
 
     if (s.op === "=") {
@@ -1097,9 +1258,9 @@
       if (rhs.t === "var" && rhs.n === "x" && !lv.x) { checkVars(lhs, ["y"], consts); return { kind: "explicitX", f: compileReal1(lhs, "y", consts) }; }
     }
 
-    var diff = { t: "bin", op: "-", a: lhs, b: rhs };
-    checkVars(diff, ["x", "y"], consts);
-    return { kind: "implicit", op: s.op, F: compileReal2(diff, consts) };
+    var gap = { t: "bin", op: "-", a: lhs, b: rhs };
+    checkVars(gap, ["x", "y"], consts);
+    return { kind: "implicit", op: s.op, F: compileReal2(gap, consts) };
   }
 
   function checkVars(n, allowed, consts) {
@@ -1226,6 +1387,12 @@
       if (r.focusOnMount) { r.focusOnMount = false; focusRow(r, false); }
     }, { once: true });
     mf.addEventListener("input", function () {
+      // Subscripts only hold letters and digits (as in Desmos): an operator typed there moves out.
+      var fixed = mf.value.replace(/_\{([A-Za-z0-9]+)(\+|-|=|<|>|,|\\cdot|\\le|\\ge|\\to)\}$/, "_{$1}$2");
+      if (fixed !== mf.value) {
+        mf.setValue(fixed, { silenceNotifications: true });
+        mf.position = mf.lastOffset;
+      }
       r.src = mf.value;
       if (rows[rows.length - 1] === r && r.src) blankRow();
       changed("type:" + r.id);
@@ -1291,13 +1458,13 @@
     var res = r.res || { kind: "empty" }, e = r.el;
     if (!e) return;
     var c = colorOf(r);
-    var drawable = ["explicitY", "explicitX", "polar", "param", "point", "implicit", "fx"].indexOf(res.kind) >= 0;
+    var drawable = ["explicitY", "explicitX", "polar", "param", "point", "implicit", "fx", "roots"].indexOf(res.kind) >= 0 || !!res.point;
     e.sw.style.setProperty("--c", c);
     e.sw.classList.toggle("off", r.hidden);
     e.sw.style.visibility = drawable ? "" : "hidden";
     e.wrap.classList.toggle("err", res.kind === "error");
 
-    var sig = res.kind + "|" + (res.name || "") + "|" + (res.msg || "") + "|" + (res.missing || []).join(",") + "|" + (res.mode || "") + "|" + !!res.shadowed;
+    var sig = res.kind + "|" + (res.name || "") + "|" + (res.msg || "") + "|" + (res.missing || []).join(",") + "|" + (res.mode || "") + "|" + !!res.shadowed + "|" + !!res.point + "|" + r.arrow;
     if (sig !== e.sig) {
       e.sig = sig;
       e.ex.innerHTML = "";
@@ -1326,10 +1493,29 @@
         e.ex.appendChild(lab);
       }
       if (res.kind === "value" || res.kind === "const") e.ex.appendChild(el("div", "val"));
+      if (res.kind === "roots") e.ex.appendChild(el("div", "val roots"));
+      if (res.point || res.kind === "roots") arrowChip(r);
       if (res.shadowed) { var n = el("div", "msg dim"); n.textContent = "only the top colour layer is drawn"; e.ex.appendChild(n); }
     }
     if (res.kind === "value" || res.kind === "const") e.ex.querySelector(".val").textContent = "= " + fmtC(res.value);
+    if (res.kind === "roots") e.ex.querySelector(".roots").textContent = rootsText(res.found);
     if (res.kind === "slider" && r.el.range && document.activeElement !== r.el.range) syncSlider(r, res.value);
+  }
+
+  function shortC(c) { return fmtC([parseFloat(c[0].toPrecision(6)), parseFloat(c[1].toPrecision(6))]); }
+  function rootsText(found) {
+    if (!found) return "";
+    if (!found.length) return "no roots in view";
+    var list = found.slice(0, 8).map(shortC).join(",  ");
+    return found.length + (found.length === 1 ? " root:  " : " roots:  ") + list + (found.length > 8 ? ", …" : "");
+  }
+
+  function arrowChip(r) {
+    var b = el("button", "chip" + (r.arrow ? " on" : ""));
+    b.type = "button";
+    b.textContent = "arrow from origin";
+    b.addEventListener("click", function () { r.arrow = !r.arrow; changed(null, true); });
+    r.el.ex.appendChild(b);
   }
 
   function buildSlider(r) {
@@ -1343,7 +1529,7 @@
     var lo = el("input", "num"), hi = el("input", "num"), range = el("input", "");
     lo.type = hi.type = "text";
     lo.value = fmt(r.sMin); hi.value = fmt(r.sMax);
-    range.type = "range"; range.step = "any";
+    range.type = "range"; range.step = r.step || "any";
     range.min = r.sMin; range.max = r.sMax; range.value = v;
     range.addEventListener("input", function () { setSlider(r, parseFloat(range.value)); });
     function bound() {
@@ -1366,7 +1552,8 @@
   }
 
   function setSlider(r, v) {
-    var step = (r.sMax - r.sMin) / 1000, d = decimalsFor(step);
+    var step = r.step || (r.sMax - r.sMin) / 1000, d = decimalsFor(step);
+    if (r.step) v = Math.round(v / r.step) * r.step;
     v = parseFloat(v.toFixed(d));
     r.src = nameLatex(r.res.name) + "=" + numLatex(v);
     r.el.input.setValue(r.src, { silenceNotifications: true });
@@ -1375,13 +1562,14 @@
 
   function buildRange(r, v) {
     var box = el("div", "range");
-    var lo = el("input", "num"), hi = el("input", "num");
+    var lo = el("input", "num"), hi = el("input", "num"), unit = v === "θ" ? ANG : 1;
     lo.type = hi.type = "text";
-    lo.value = fmt(r.tMin); hi.value = fmt(r.tMax);
+    function show() { lo.value = fmt(parseFloat((r.tMin / unit).toPrecision(10))); hi.value = fmt(parseFloat((r.tMax / unit).toPrecision(10))); }
+    show();
     function bound() {
-      var a = parseFloat(lo.value), b = parseFloat(hi.value);
+      var a = parseFloat(lo.value) * unit, b = parseFloat(hi.value) * unit;
       if (isFinite(a) && isFinite(b) && a < b) { r.tMin = a; r.tMax = b; changed(null); }
-      lo.value = fmt(r.tMin); hi.value = fmt(r.tMax);
+      show();
     }
     lo.addEventListener("change", bound);
     hi.addEventListener("change", bound);
@@ -1424,6 +1612,7 @@
   var stage = document.getElementById("stage");
   var plot = document.getElementById("plot"), pctx = plot.getContext("2d");
   var fxc = document.getElementById("fx"), fctx = fxc.getContext("2d");
+  var setPanel = null;
   var W = 0, H = 0, dpr = 1;
   var dirtyPlot = true;
 
@@ -1451,12 +1640,13 @@
     viewChanged();
   }
 
-  function viewChanged() { dirtyPlot = true; fx.request(false); saveSoon(); }
+  function viewChanged() { dirtyPlot = true; fx.request(false); saveSoon(); if (setPanel && !setPanel.hidden) syncRanges(); }
 
   // Pointer pan / pinch
   var pointers = {};
   function pts() { return Object.keys(pointers).map(function (k) { return pointers[k]; }); }
   plot.addEventListener("pointerdown", function (e) {
+    if (settings.lock) return;
     plot.setPointerCapture(e.pointerId);
     pointers[e.pointerId] = { x: e.offsetX, y: e.offsetY };
   });
@@ -1485,15 +1675,79 @@
 
   plot.addEventListener("wheel", function (e) {
     e.preventDefault();
+    if (settings.lock) return;
     var dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? H : 1);
     zoomAt(e.offsetX, e.offsetY, Math.exp(Math.max(-300, Math.min(300, dy)) * 0.0015));
   }, { passive: false });
 
-  document.getElementById("zin").addEventListener("click", function () { zoomAt(W / 2, H / 2, 0.5); });
-  document.getElementById("zout").addEventListener("click", function () { zoomAt(W / 2, H / 2, 2); });
-  document.getElementById("zhome").addEventListener("click", function () { view.cx = 0; view.cy = 0; view.s = 24 / Math.max(W, 1); viewChanged(); });
+  document.getElementById("zin").addEventListener("click", function () { if (!settings.lock) zoomAt(W / 2, H / 2, 0.5); });
+  document.getElementById("zout").addEventListener("click", function () { if (!settings.lock) zoomAt(W / 2, H / 2, 2); });
+  document.getElementById("zhome").addEventListener("click", function () { if (settings.lock) return; view.cx = 0; view.cy = 0; view.s = 24 / Math.max(W, 1); viewChanged(); });
   var gridBtn = document.getElementById("zgrid");
   gridBtn.addEventListener("click", function () { showGrid = !showGrid; gridBtn.classList.toggle("on", showGrid); dirtyPlot = true; save(); });
+
+  // ---------- graph settings menu ----------
+  var setBtn = document.getElementById("zset");
+  setPanel = document.getElementById("gsettings");
+  var CHECKS = ["minor", "numbers", "arrows", "complex", "projector", "lock"];
+  var RANGE_IDS = ["gs-xmin", "gs-xmax", "gs-ymin", "gs-ymax"];
+  function syncRanges() {
+    var vals = [wx(0), wx(W), wy(H), wy(0)];
+    RANGE_IDS.forEach(function (id, k) {
+      var inp = document.getElementById(id);
+      if (document.activeElement !== inp) inp.value = parseFloat(vals[k].toPrecision(5));
+    });
+  }
+  function syncSettingsUI() {
+    setPanel.querySelectorAll("[data-set]").forEach(function (b) { b.classList.toggle("on", String(settings[b.dataset.set]) === b.dataset.v); });
+    CHECKS.forEach(function (k) { document.getElementById("gs-" + k).checked = !!settings[k]; });
+    document.getElementById("gs-xlabel").value = settings.xLabel;
+    document.getElementById("gs-ylabel").value = settings.yLabel;
+    document.getElementById("gs-xlabel").placeholder = settings.complex ? "Re" : "x";
+    document.getElementById("gs-ylabel").placeholder = settings.complex ? "Im" : "y";
+    syncRanges();
+  }
+  function applySettings(recompile) {
+    if (recompile) changed(null);
+    else { dirtyPlot = true; saveSoon(); }
+    syncSettingsUI();
+  }
+  function openSettings(open) {
+    setPanel.hidden = !open;
+    setBtn.classList.toggle("on", open);
+    if (open) syncSettingsUI();
+  }
+  setBtn.addEventListener("click", function (e) { e.stopPropagation(); openSettings(setPanel.hidden); });
+  document.addEventListener("pointerdown", function (e) { if (!setPanel.hidden && !setPanel.contains(e.target) && e.target !== setBtn && !setBtn.contains(e.target)) openSettings(false); });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !setPanel.hidden) openSettings(false); });
+  setPanel.querySelectorAll("[data-set]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var v = b.dataset.v;
+      settings[b.dataset.set] = v === "true" ? true : v === "false" ? false : v;
+      applySettings(b.dataset.set === "degrees");
+    });
+  });
+  CHECKS.forEach(function (k) {
+    document.getElementById("gs-" + k).addEventListener("change", function (e) {
+      settings[k] = e.target.checked;
+      applySettings(k === "complex");
+    });
+  });
+  ["x", "y"].forEach(function (a) {
+    document.getElementById("gs-" + a + "label").addEventListener("input", function (e) { settings[a + "Label"] = e.target.value; applySettings(false); });
+  });
+  RANGE_IDS.forEach(function (id) {
+    document.getElementById(id).addEventListener("change", function () {
+      var v = RANGE_IDS.map(function (i) { return parseFloat(document.getElementById(i).value); });
+      if (v.every(isFinite) && v[1] > v[0] && v[3] > v[2]) {
+        view.s = clampScale(Math.max((v[1] - v[0]) / W, (v[3] - v[2]) / H));
+        view.cx = (v[0] + v[1]) / 2;
+        view.cy = (v[2] + v[3]) / 2;
+        viewChanged();
+      }
+      syncRanges();
+    });
+  });
 
   // =====================================================================
   // Plot drawing
@@ -1511,66 +1765,141 @@
     return v.toFixed(decimalsFor(step));
   }
 
-  function drawGrid(overFx) {
-    var c = pctx, major = niceStep(view.s * 110), mant = major / Math.pow(10, Math.floor(Math.log10(major) + 1e-9));
-    var minor = major / (Math.round(mant) === 2 ? 4 : 5);
-    var x0 = wx(0), x1 = wx(W), y0 = wy(H), y1 = wy(0);
-    var alpha = overFx ? 0.5 : 1;
-    c.lineWidth = 1;
-    function lines(step, color) {
-      c.strokeStyle = color;
-      c.beginPath();
-      for (var x = Math.ceil(x0 / step) * step; x <= x1; x += step) { var X = Math.round(sx(x)) + 0.5; c.moveTo(X, 0); c.lineTo(X, H); }
-      for (var y = Math.ceil(y0 / step) * step; y <= y1; y += step) { var Y = Math.round(sy(y)) + 0.5; c.moveTo(0, Y); c.lineTo(W, Y); }
-      c.stroke();
-    }
-    c.globalAlpha = alpha * (theme.dark ? 0.35 : 0.45);
-    if ((x1 - x0) / minor < 400) lines(minor, theme.border);
-    c.globalAlpha = alpha * (theme.dark ? 0.9 : 1);
-    lines(major, theme.border);
-    c.globalAlpha = 1;
+  function lineWidth() { return settings.projector ? 4 : 2.5; }
 
-    var ax = sx(0), ay = sy(0);
-    c.strokeStyle = theme.dim;
-    c.lineWidth = 1.25;
-    c.beginPath();
-    if (ax >= 0 && ax <= W) { c.moveTo(ax, 0); c.lineTo(ax, H); }
-    if (ay >= 0 && ay <= H) { c.moveTo(0, ay); c.lineTo(W, ay); }
-    c.stroke();
+  function gcd(a, b) { return b ? gcd(b, a % b) : a; }
+  function angleLabel(k, den) {
+    if (settings.degrees) return Math.round(k * 180 / den) + "°";
+    if (k === 0) return "0";
+    var g = gcd(k, den), n = k / g, d = den / g;
+    return (n === 1 ? "" : n) + "π" + (d === 1 ? "" : "/" + d);
+  }
 
-    c.font = "11px " + theme.font;
-    c.fillStyle = theme.dim;
+  function setLabelStyle(overFx) {
+    var c = pctx;
+    c.font = (settings.projector ? 15 : 11) + "px " + theme.font;
+    c.fillStyle = overFx ? "#e7e9ec" : theme.dim;
     c.strokeStyle = overFx ? "rgba(0,0,0,0.6)" : theme.bg;
-    if (overFx) c.fillStyle = "#e7e9ec";
     c.lineWidth = 3;
     c.lineJoin = "round";
-    var ly = Math.min(Math.max(ay + 4, 4), H - 16);
+  }
+  function haloText(t, x, y) { pctx.strokeText(t, x, y); pctx.fillText(t, x, y); }
+
+  function drawGrid(overFx) {
+    var c = pctx, major = niceStep(view.s * (settings.projector ? 150 : 110));
+    var mant = major / Math.pow(10, Math.floor(Math.log10(major) + 1e-9));
+    var minor = major / (Math.round(mant) === 2 ? 4 : 5);
+    var x0 = wx(0), x1 = wx(W), y0 = wy(H), y1 = wy(0);
+    var alpha = overFx ? 0.5 : 1, ox = sx(0), oy = sy(0);
+    var minorAlpha = alpha * (theme.dark ? 0.35 : 0.45), majorAlpha = alpha * (theme.dark ? 0.9 : 1);
+    c.lineWidth = 1;
+
+    if (settings.grid === "square") {
+      var lines = function (step) {
+        c.strokeStyle = theme.border;
+        c.beginPath();
+        for (var x = Math.ceil(x0 / step) * step; x <= x1; x += step) { var X = Math.round(sx(x)) + 0.5; c.moveTo(X, 0); c.lineTo(X, H); }
+        for (var y = Math.ceil(y0 / step) * step; y <= y1; y += step) { var Y = Math.round(sy(y)) + 0.5; c.moveTo(0, Y); c.lineTo(W, Y); }
+        c.stroke();
+      };
+      if (settings.minor && (x1 - x0) / minor < 400) { c.globalAlpha = minorAlpha; lines(minor); }
+      c.globalAlpha = majorAlpha;
+      lines(major);
+    } else if (settings.grid === "polar") {
+      var dx = x0 > 0 ? x0 : x1 < 0 ? -x1 : 0, dy = y0 > 0 ? y0 : y1 < 0 ? -y1 : 0;
+      var rMin = Math.hypot(dx, dy);
+      var rMax = Math.max(Math.hypot(x0, y0), Math.hypot(x1, y0), Math.hypot(x0, y1), Math.hypot(x1, y1));
+      var circles = function (step) {
+        var n0 = Math.max(1, Math.floor(rMin / step)), n1 = Math.ceil(rMax / step);
+        if (n1 - n0 > 500) return;
+        c.strokeStyle = theme.border;
+        c.beginPath();
+        for (var k = n0; k <= n1; k++) { var R = k * step / view.s; c.moveTo(ox + R, oy); c.arc(ox, oy, R, 0, 2 * Math.PI); }
+        c.stroke();
+      };
+      if (settings.minor) { c.globalAlpha = minorAlpha; circles(minor); }
+      c.globalAlpha = majorAlpha;
+      circles(major);
+      // spokes every π/12; the π/6 ones are drawn stronger, and the axes are drawn separately
+      var reach = rMax / view.s + 10;
+      c.strokeStyle = theme.border;
+      [1, 0].forEach(function (odd) {
+        if (odd && !settings.minor) return;
+        c.beginPath();
+        for (var a = 0; a < 24; a++) {
+          if (a % 6 === 0 || a % 2 !== odd) continue;
+          var th = a * Math.PI / 12;
+          c.moveTo(ox, oy);
+          c.lineTo(ox + reach * Math.cos(th), oy - reach * Math.sin(th));
+        }
+        c.globalAlpha = odd ? minorAlpha : majorAlpha;
+        c.stroke();
+      });
+    }
+    c.globalAlpha = 1;
+
+    // axes, with optional arrowheads
+    c.strokeStyle = theme.dim;
+    c.fillStyle = theme.dim;
+    c.lineWidth = settings.projector ? 2 : 1.25;
+    c.beginPath();
+    var showY = ox >= 0 && ox <= W, showX = oy >= 0 && oy <= H;
+    if (showY) { c.moveTo(ox, 0); c.lineTo(ox, H); }
+    if (showX) { c.moveTo(0, oy); c.lineTo(W, oy); }
+    c.stroke();
+    if (settings.arrows) {
+      var hs = settings.projector ? 11 : 8;
+      c.beginPath();
+      if (showX) { c.moveTo(W, oy); c.lineTo(W - hs * 1.4, oy - hs / 2); c.lineTo(W - hs * 1.4, oy + hs / 2); c.closePath(); }
+      if (showY) { c.moveTo(ox, 0); c.lineTo(ox - hs / 2, hs * 1.4); c.lineTo(ox + hs / 2, hs * 1.4); c.closePath(); }
+      c.fill();
+    }
+    var xl = settings.xLabel || (settings.arrows ? (settings.complex ? "Re" : "x") : "");
+    var yl = settings.yLabel || (settings.arrows ? (settings.complex ? "Im" : "y") : "");
+    c.font = "italic " + (settings.projector ? 20 : 16) + "px KaTeX_Math, " + theme.font;
+    c.fillStyle = theme.text;
+    c.strokeStyle = overFx ? "rgba(0,0,0,0.6)" : theme.bg;
+    c.lineWidth = 3;
+    if (xl && showX) { c.textAlign = "right"; c.textBaseline = "bottom"; haloText(xl, W - 6, oy - 6); }
+    if (yl && showY) { c.textAlign = "left"; c.textBaseline = "top"; haloText(yl, ox + 8, 4); }
+
+    if (!settings.numbers) return;
+    setLabelStyle(overFx);
+    var ly = Math.min(Math.max(oy + 4, 4), H - 16);
     c.textAlign = "center"; c.textBaseline = "top";
     for (var x = Math.ceil(x0 / major) * major; x <= x1; x += major) {
       var X = sx(x);
       if (Math.abs(x) < major * 1e-6 || X < 12 || X > W - 12) continue;
-      var t = tickLabel(x, major);
-      c.strokeText(t, X, ly); c.fillText(t, X, ly);
+      haloText(tickLabel(x, major), X, ly);
     }
-    var lx = Math.min(Math.max(ax - 6, 6), W - 6);
-    var right = ax - 6 < 30;
+    var right = ox - 6 < 30, lx = right ? Math.max(ox + 6, 6) : Math.min(ox - 6, W - 6);
     c.textAlign = right ? "left" : "right"; c.textBaseline = "middle";
-    if (right) lx = Math.max(ax + 6, 6);
     for (var y = Math.ceil(y0 / major) * major; y <= y1; y += major) {
       var Y = sy(y);
       if (Math.abs(y) < major * 1e-6 || Y < 10 || Y > H - 10) continue;
-      var u = tickLabel(y, major);
-      c.strokeText(u, lx, Y); c.fillText(u, lx, Y);
+      haloText(tickLabel(y, major), lx, Y);
     }
-    if (ax > 0 && ax < W && ay > 0 && ay < H) {
+    if (ox > 0 && ox < W && oy > 0 && oy < H) {
       c.textAlign = "right"; c.textBaseline = "top";
-      c.strokeText("0", ax - 5, ay + 4); c.fillText("0", ax - 5, ay + 4);
+      haloText("0", ox - 5, oy + 4);
+      if (settings.grid === "polar") {
+        // angle labels every π/6 near the edge of the view
+        c.textAlign = "center"; c.textBaseline = "middle";
+        for (var k = 1; k < 12; k++) {
+          if (k % 3 === 0) continue;
+          var t = k * Math.PI / 6, ux = Math.cos(t), uy = -Math.sin(t);
+          var tx = ux > 0 ? (W - ox) / ux : ux < 0 ? -ox / ux : Infinity;
+          var ty = uy > 0 ? (H - oy) / uy : uy < 0 ? -oy / uy : Infinity;
+          var d = Math.min(tx, ty) - (settings.projector ? 28 : 20);
+          if (d > 40) haloText(angleLabel(k, 6), ox + ux * d, oy + uy * d);
+        }
+      }
     }
   }
 
   function strokeCurve(color) {
     pctx.strokeStyle = color;
-    pctx.lineWidth = 2.5;
+    pctx.lineWidth = lineWidth();
     pctx.lineJoin = "round";
     pctx.lineCap = "round";
     pctx.stroke();
@@ -1635,11 +1964,13 @@
       c.drawImage(tmp, -CELL / 2, -CELL / 2, gw * CELL, gh * CELL);
     }
     c.beginPath();
+    // A sign change is only a real crossing if the function is near zero at the interpolated point;
+    // otherwise it's a jump (an asymptote, or a branch cut such as arg's at the negative real axis).
     function edge(ax, ay, va, bx, by, vb) {
       if (!(va < 0 !== vb < 0) || !isFinite(va) || !isFinite(vb)) return null;
       var t = va / (va - vb), X = ax + (bx - ax) * t, Y = ay + (by - ay) * t;
       var vm = F(wx(X), wy(Y));
-      if (!(Math.abs(vm) <= Math.abs(va) + Math.abs(vb))) return null;
+      if (!(Math.abs(vm) <= 0.35 * (Math.abs(va) + Math.abs(vb)))) return null;
       return [X, Y];
     }
     for (var j = 0; j < gh - 1; j++) {
@@ -1662,16 +1993,68 @@
 
   function hexRgb(h) { var n = parseInt(h.slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
 
-  function drawPoint(x, y, color) {
-    var X = sx(x), Y = sy(y);
+  function drawPoint(x, y, color, text) {
+    var X = sx(x), Y = sy(y), rad = settings.projector ? 7 : 5;
     if (X < -10 || X > W + 10 || Y < -10 || Y > H + 10) return;
     pctx.beginPath();
-    pctx.arc(X, Y, 5, 0, 2 * Math.PI);
+    pctx.arc(X, Y, rad, 0, 2 * Math.PI);
     pctx.fillStyle = color;
     pctx.strokeStyle = theme.dark ? "#15171a" : "#ffffff";
     pctx.lineWidth = 2;
     pctx.stroke();
     pctx.fill();
+    if (text) {
+      pctx.font = (settings.projector ? 16 : 13) + "px " + theme.font;
+      pctx.textAlign = "left"; pctx.textBaseline = "bottom";
+      pctx.fillStyle = color;
+      pctx.strokeStyle = theme.bg;
+      pctx.lineWidth = 3;
+      haloText(text, X + rad + 3, Y - rad);
+    }
+  }
+
+  function drawArrow(x0, y0, x1, y1, color) {
+    var X0 = sx(x0), Y0 = sy(y0), X1 = sx(x1), Y1 = sy(y1), L = Math.hypot(X1 - X0, Y1 - Y0);
+    if (L < 1) return;
+    var ux = (X1 - X0) / L, uy = (Y1 - Y0) / L, hs = settings.projector ? 16 : 12;
+    var c = pctx;
+    c.beginPath();
+    c.moveTo(X0, Y0);
+    c.lineTo(X1 - ux * hs * 0.8, Y1 - uy * hs * 0.8);
+    strokeCurve(color);
+    c.beginPath();
+    c.moveTo(X1, Y1);
+    c.lineTo(X1 - ux * hs - uy * hs * 0.45, Y1 - uy * hs + ux * hs * 0.45);
+    c.lineTo(X1 - ux * hs + uy * hs * 0.45, Y1 - uy * hs - ux * hs * 0.45);
+    c.closePath();
+    c.fillStyle = color;
+    c.fill();
+  }
+
+  // Roots of analytic equations in z, found by Newton's method from a grid of starting points.
+  function findRoots(F, dF) {
+    var x0 = Math.min(wx(0), -2), x1 = Math.max(wx(W), 2), y0 = Math.min(wy(H), -2), y1 = Math.max(wy(0), 2);
+    var padX = (x1 - x0) * 0.15, padY = (y1 - y0) * 0.15, N = 28, out = [];
+    x0 -= padX; x1 += padX; y0 -= padY; y1 += padY;
+    for (var i = 0; i < N && out.length < 300; i++) {
+      for (var j = 0; j < N && out.length < 300; j++) {
+        var zr = x0 + (i + 0.5) * (x1 - x0) / N, zi = y0 + (j + 0.5) * (y1 - y0) / N, ok = false;
+        for (var k = 0; k < 80; k++) {
+          var f = F(zr, zi), d = dF(zr, zi), den = d[0] * d[0] + d[1] * d[1];
+          if (!(den > 0) || !isFinite(f[0]) || !isFinite(f[1])) break;
+          var sr = (f[0] * d[0] + f[1] * d[1]) / den, si = (f[1] * d[0] - f[0] * d[1]) / den;
+          zr -= sr; zi -= si;
+          if (Math.hypot(sr, si) <= 1e-13 * (1 + Math.hypot(zr, zi))) { ok = true; break; }
+        }
+        if (!ok) continue;
+        var fz = F(zr, zi);
+        if (!(Math.hypot(fz[0], fz[1]) < 1e-8)) continue;
+        var dup = out.some(function (q) { return Math.hypot(q[0] - zr, q[1] - zi) < 1e-6 * (1 + Math.hypot(zr, zi)); });
+        if (!dup) out.push([Math.abs(zr) < 1e-12 ? 0 : zr, Math.abs(zi) < 1e-12 ? 0 : zi]);
+      }
+    }
+    out.sort(function (a, b) { return Math.atan2(a[1], a[0]) - Math.atan2(b[1], b[0]) || Math.hypot(a[0], a[1]) - Math.hypot(b[0], b[1]); });
+    return out;
   }
 
   function drawPlot() {
@@ -1681,6 +2064,7 @@
     var overFx = fx.active;
     if (showGrid) drawGrid(overFx);
     var visible = rows.filter(function (r) { return !r.hidden && r.res; });
+    var rootsKey = [Math.round(view.cx / (W * view.s) * 4), Math.round(view.cy / (H * view.s) * 4), Math.round(Math.log(view.s) * 3)].join(",");
     visible.forEach(function (r) {
       var res = r.res, color = colorOf(r);
       try {
@@ -1688,10 +2072,36 @@
         else if (res.kind === "explicitY") drawExplicit(res.f, color, false);
         else if (res.kind === "explicitX") drawExplicit(res.f, color, true);
         else if (res.kind === "param") drawParam(res.fx, res.fy, r.tMin, r.tMax, color);
-        else if (res.kind === "polar") drawParam(function (q) { return res.f(q) * Math.cos(q); }, function (q) { return res.f(q) * Math.sin(q); }, r.tMin, r.tMax, color);
+        else if (res.kind === "polar") drawParam(function (q) { return res.f(q / ANG) * Math.cos(q); }, function (q) { return res.f(q / ANG) * Math.sin(q); }, r.tMin, r.tMax, color);
       } catch (e) { /* a bad sample shouldn't stop the other graphs */ }
     });
-    visible.forEach(function (r) { if (r.res.kind === "point") drawPoint(r.res.x, r.res.y, colorOf(r)); });
+    visible.forEach(function (r) {
+      var res = r.res, color = colorOf(r);
+      if (res.kind === "point") drawPoint(res.x, res.y, color);
+      else if (res.point) {
+        if (r.arrow) drawArrow(0, 0, res.point[0], res.point[1], color);
+        drawPoint(res.point[0], res.point[1], color, res.name ? displayName(res.name) : "");
+      } else if (res.kind === "roots") {
+        if (res.key !== rootsKey) {
+          var before = res.found ? res.found.length : -1;
+          res.found = findRoots(res.F, res.dF);
+          res.key = rootsKey;
+          if (res.found.length !== before) renderRow(r);
+        }
+        res.found.forEach(function (z) {
+          if (r.arrow) drawArrow(0, 0, z[0], z[1], color);
+          drawPoint(z[0], z[1], color);
+        });
+      }
+    });
+  }
+
+  function displayName(n) {
+    var sub = { 0: "₀", 1: "₁", 2: "₂", 3: "₃", 4: "₄", 5: "₅", 6: "₆", 7: "₇", 8: "₈", 9: "₉" };
+    var parts = n.split("_"), head = parts[0] === "θ" ? "θ" : parts[0];
+    if (parts.length < 2) return head;
+    var tail = parts.slice(1).join("");
+    return head + (/^\d+$/.test(tail) ? tail.split("").map(function (d) { return sub[d]; }).join("") : "_" + tail);
   }
 
   // =====================================================================
@@ -1832,7 +2242,7 @@
   }
 
   function rowState(r) {
-    return { src: r.src, color: r.color, hidden: r.hidden, sMin: r.sMin, sMax: r.sMax, tMin: r.tMin, tMax: r.tMax, iter: r.iter };
+    return { src: r.src, color: r.color, hidden: r.hidden, sMin: r.sMin, sMax: r.sMax, tMin: r.tMin, tMax: r.tMax, iter: r.iter, arrow: r.arrow, step: r.step };
   }
 
   // Undo history: one snapshot per action; typing in the same row is merged until it pauses.
@@ -1886,7 +2296,7 @@
       localStorage.setItem(STORE, JSON.stringify({
         v: 2,
         rows: rows.filter(function (r) { return r.src.trim(); }).map(rowState),
-        view: view, grid: showGrid
+        view: view, grid: showGrid, settings: settings
       }));
     } catch (e) {}
   }
@@ -1906,6 +2316,7 @@
     rows.push(newRow("", { color: nextColor() }));
     if (state.view) { view.cx = state.view.cx; view.cy = state.view.cy; view.s = state.view.s; }
     if (typeof state.grid === "boolean") showGrid = state.grid;
+    if (state.settings) for (var sk in state.settings) if (sk in settings) settings[sk] = state.settings[sk];
     gridBtn.classList.toggle("on", showGrid);
     rowsEl.innerHTML = "";
     compileAll();
@@ -1919,7 +2330,7 @@
 
   var EXAMPLES = {
     mandelbrot: function () { return { rows: [{ src: "z\\to z^2+c" }], view: fitView(-0.6, 0, 3.6) }; },
-    julia: function () { return { rows: [{ src: "a=-0.8", sMin: -1.5, sMax: 0.5 }, { src: "b=0.156", sMin: -1, sMax: 1 }, { src: "c=a+bi" }, { src: "z\\to z^2+c" }], view: fitView(0, 0, 3.6) }; },
+    julia: function () { return { settings: { complex: true }, rows: [{ src: "a=-0.8", sMin: -1.5, sMax: 0.5 }, { src: "b=0.156", sMin: -1, sMax: 1 }, { src: "c=a+bi" }, { src: "z\\to z^2+c" }], view: fitView(0, 0, 3.6) }; },
     ship: function () { return { rows: [{ src: "z\\to\\left(\\left|\\operatorname{Re}\\left(z\\right)\\right|+i\\left|\\operatorname{Im}\\left(z\\right)\\right|\\right)^2+c" }], view: fitView(-0.45, -0.5, 3.4) }; },
     cubic: function () { return { rows: [{ src: "z\\to z^3+c" }], view: fitView(0, 0, 3.4) }; },
     domain: function () { return { rows: [{ src: "w=\\frac{\\left(z^2-1\\right)\\left(z-2-i\\right)^2}{z^2+2+2i}" }], view: fitView(0, 0, 7) }; },
@@ -1927,6 +2338,14 @@
     implicit: function () { return { rows: [{ src: "\\left(x^2+y^2-1\\right)^3=x^2y^3" }, { src: "x^2+y^2<0.25" }], view: fitView(0, 0, 5) }; },
     curves: function () { return { rows: [{ src: "r=\\cos\\left(4\\theta\\right)" }, { src: "\\left(\\sin3t,\\sin4t\\right)" }, { src: "\\left(0.5,0.5\\right)" }], view: fitView(0, 0, 4) }; },
     calculus: function () { return { rows: [{ src: "f\\left(x\\right)=x^3-3x" }, { src: "a=1.5", sMin: -2.5, sMax: 2.5 }, { src: "y=f\\left(a\\right)+f'\\left(a\\right)\\left(x-a\\right)" }, { src: "\\left(a,f\\left(a\\right)\\right)" }], view: fitView(0, 0, 9) }; },
+    loci: function () {
+      return { settings: { complex: true, grid: "square" }, rows: [{ src: "\\left|z-1-i\\right|=2" }, { src: "\\arg\\left(z-1\\right)=\\frac{\\pi}{4}" },
+        { src: "\\left|z+2\\right|\\le1" }, { src: "z_1=1+i", arrow: true }], view: fitView(0, 0.5, 11) };
+    },
+    roots: function () {
+      return { settings: { complex: true, grid: "polar" }, rows: [{ src: "n=5", sMin: 2, sMax: 12, step: 1 }, { src: "z^n=1", arrow: true },
+        { src: "\\left|z\\right|=1" }], view: fitView(0, 0, 4.5) };
+    },
     integral: function () { return { rows: [{ src: "f\\left(x\\right)=\\int_0^x\\sin\\left(t^2\\right)dt" }, { src: "y=\\sin\\left(x^2\\right)" }], view: fitView(0, 0, 10) }; },
     fourier: function () { return { rows: [{ src: "N=5", sMin: 1, sMax: 40 }, { src: "y=\\frac{4}{\\pi}\\sum_{n=1}^N\\frac{\\sin\\left(\\left(2n-1\\right)x\\right)}{2n-1}" }], view: fitView(0, 0, 14) }; }
   };
